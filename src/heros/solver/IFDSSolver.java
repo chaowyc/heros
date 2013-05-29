@@ -140,6 +140,11 @@ public class IFDSSolver<N,D,M,I extends InterproceduralCFG<N, M>> extends IDESol
 				}
 			}
 
+			@Override
+			public void updateCFG(I cfg) {
+				ifdsProblem.updateCFG(cfg);
+			}
+
 			});
 	}
 	

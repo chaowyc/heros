@@ -229,5 +229,15 @@ public class FlowFunctionCache<N, D, M> implements FlowFunctions<N, D, M> {
 		System.err.println(callToReturnCache.stats());
 	}
 	
+	/**
+	 * Invalidates all entries in this cache so that they are computed again
+	 * when they are accessed the next time.
+	 */
+	public void invalidateAll() {
+		this.normalCache.invalidateAll();
+		this.callCache.invalidateAll();
+		this.returnCache.invalidateAll();
+		this.callToReturnCache.invalidateAll();
+	}
 
 }

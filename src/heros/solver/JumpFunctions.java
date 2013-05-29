@@ -14,13 +14,15 @@ import heros.DontSynchronize;
 import heros.EdgeFunction;
 import heros.SynchronizedBy;
 import heros.ThreadSafe;
+import heros.util.Utils;
 
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.Map.Entry;
 import java.util.Set;
-
 
 import com.google.common.collect.HashBasedTable;
 import com.google.common.collect.Table;
@@ -132,6 +134,84 @@ public class JumpFunctions<N,D,L> {
 		Set<Cell<D, D, EdgeFunction<L>>> res = table.cellSet();
 		if(res==null) return Collections.emptySet();
 		return res;
+	}
+	
+	/**
+	 * Removes all entries from this table
+	 */
+	public void clear() {
+		this.nonEmptyReverseLookup.clear();
+		this.nonEmptyForwardLookup.clear();
+		this.nonEmptyLookupByTargetNode.clear();
+	}
+	
+	/**
+	 * Removes all jump function with the given target
+	 * @see target The target for which to remove all jump functions
+	 */
+	public synchronized void removeByTarget(N target) {
+		Map<D,List<D>> rmList = new HashMap<D,List<D>>();
+		for (Cell<D, D, EdgeFunction<L>> cell : lookupByTarget(target))
+			Utils.addElementToMapList(rmList, cell.getRowKey(), cell.getColumnKey());
+		for (Entry<D,List<D>> entry : rmList.entrySet())
+			for (D d : entry.getValue())
+				removeFunction(entry.getKey(), target, d);
+	}
+
+	/**
+	 * Removes a jump function. The source statement is implicit.
+	 * @see PathEdge
+	 * @return True if the function has actually been removed. False if it was not
+	 * there anyway.
+	 */
+	public synchronized boolean removeFunction(D sourceVal, N target, D targetVal) {
+		assert sourceVal!=null;
+		assert target!=null;
+		assert targetVal!=null;
+		
+		Map<D,EdgeFunction<L>> sourceValToFunc = nonEmptyReverseLookup.get(target, targetVal);
+		if (sourceValToFunc == null)
+			return false;
+		if (sourceValToFunc.remove(sourceVal) == null)
+			return false;
+		if (sourceValToFunc.isEmpty())
+			nonEmptyReverseLookup.remove(targetVal, targetVal);
+		
+		Map<D, EdgeFunction<L>> targetValToFunc = nonEmptyForwardLookup.get(sourceVal, target);
+		if (targetValToFunc == null)
+			return false;
+		if (targetValToFunc.remove(targetVal) == null)
+			return false;
+		if (targetValToFunc.isEmpty())
+			nonEmptyForwardLookup.remove(sourceVal, target);
+
+		Table<D,D,EdgeFunction<L>> table = nonEmptyLookupByTargetNode.get(target);
+		if (table == null)
+			return false;
+		if (table.remove(sourceVal, targetVal) == null)
+			return false;
+		if (table.isEmpty())
+			nonEmptyLookupByTargetNode.remove(target);
+		
+		return true;
+	}
+
+	/**
+	 * Gets the number of target units in this cache
+	 * @return The number of target units in this cache
+	 */
+	int getTargetCount() {
+		assert nonEmptyForwardLookup.size() == nonEmptyReverseLookup.size();
+		return nonEmptyForwardLookup.size();
+	}
+	
+	/**
+	 * Gets the overall number of source facts for which there are entries in
+	 * this cache
+	 * @return The overall number of source facts in this cache
+	 */
+	int getSourceValCount() {
+		return this.nonEmptyForwardLookup.rowKeySet().size();
 	}
 	
 }

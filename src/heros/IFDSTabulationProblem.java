@@ -45,6 +45,13 @@ public interface IFDSTabulationProblem<N,D,M, I extends InterproceduralCFG<N,M>>
 	I interproceduralCFG();
 	
 	/**
+	 * Updates the locally cached control-flow graph over which the problem is computed.
+	 * Typically this will be a {@link JimpleBasedInterproceduralCFG}.
+	 * @param cfg The new control-flow graph
+	 */
+	void updateCFG(I cfg);
+
+	/**
 	 * Returns initial seeds to be used for the analysis. (a set of statements)
 	 */
 	Set<N> initialSeeds();

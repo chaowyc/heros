@@ -23,9 +23,10 @@ import heros.InterproceduralCFG;
  * 
  * @param <D> The type of data-flow facts to be computed by the tabulation problem.
  */
-public abstract class DefaultIFDSTabulationProblem<N,D,M, I extends InterproceduralCFG<N,M>> implements IFDSTabulationProblem<N,D,M,I> {
+public abstract class DefaultIFDSTabulationProblem<N,D,M, I extends InterproceduralCFG<N,M>>
+		implements IFDSTabulationProblem<N,D,M,I> {
 
-	private final I icfg;
+	private I icfg;
 	private FlowFunctions<N,D,M> flowFunctions;
 	private D zeroValue;
 	
@@ -76,5 +77,10 @@ public abstract class DefaultIFDSTabulationProblem<N,D,M, I extends Interprocedu
 	@Override
 	public boolean computeValues() {
 		return true;
+	}
+
+	@Override
+	public void updateCFG(I cfg) {
+		this.icfg = cfg;
 	}
 }
