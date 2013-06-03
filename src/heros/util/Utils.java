@@ -8,6 +8,7 @@ import java.io.IOException;
 import java.nio.channels.FileChannel;
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -137,9 +138,11 @@ public class Utils {
 	 * @param element The key for which which to remove all rows from the table
 	 */
 	public static <X,Y,Z> void removeElementFromTable(Table<X, Y, Z> table, X element) {
-		List<Y> rm = new ArrayList<Y>(table.row(element).keySet());
-		for (Y y : rm)
-			table.remove(element, y);
+		Iterator<Y> it = table.row(element).keySet().iterator();
+		while (it.hasNext()) {
+			it.next();
+			it.remove();
+		}
 	}
 	
 	public static void copyFile(String sourceFile, String destFile) throws IOException {
