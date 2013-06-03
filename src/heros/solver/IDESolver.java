@@ -116,7 +116,7 @@ public class IDESolver<N,D,M,V,I extends InterproceduralCFG<N, M>> {
 	@SynchronizedBy("thread safe data structure, consistent locking when used")
 	protected final JumpFunctions<N,D,V> jumpFn;
 	@SynchronizedBy("thread safe data structure, consistent locking when used")
-	protected Table<N,D,Map<D, EdgeFunction<V>>> jumpSave = null;
+	protected Map<N,Set<D>> jumpSave = null;
 	
 	//stores summaries that were queried before they were computed
 	//see CC 2010 paper by Naeem, Lhotak and Rodriguez
@@ -293,7 +293,7 @@ public class IDESolver<N,D,M,V,I extends InterproceduralCFG<N, M>> {
 		I newI = (I) newcfg;
 		tabulationProblem.updateCFG(newI);
 		
-		long startTime = System.nanoTime();
+		long beforeChangeset = System.nanoTime();
 		if (DEBUG)
 			System.out.println("Computing changeset...");
 
@@ -308,18 +308,20 @@ public class IDESolver<N,D,M,V,I extends InterproceduralCFG<N, M>> {
 				expiredNodes);
 		
 		// Change the wrappers so that they point to the new Jimple objects
+		long beforeMerge = System.nanoTime();
 		newcfg.merge(oldcfg);
+		System.out.println("CFG wrappers merged in " + (System.nanoTime() - beforeMerge) / 1E9
+				+ " seconds.");
 		
 		// Invalidate all cached functions
 		ffCache.invalidateAll();
 		efCache.invalidateAll();
 
-		if (DEBUG)
-			System.out.println("Changeset computed in " + (System.nanoTime() - startTime) / 1E9
-					+ " seconds. Found " + expiredEdges.size() + " expired edges, "
-					+ newEdges.size() + " new edges, "
-					+ expiredNodes.size() + " expired nodes, and "
-					+ newNodes.size() + " new nodes.");
+		System.out.println("Changeset computed in " + (System.nanoTime() - beforeChangeset) / 1E9
+				+ " seconds. Found " + expiredEdges.size() + " expired edges, "
+				+ newEdges.size() + " new edges, "
+				+ expiredNodes.size() + " expired nodes, and "
+				+ newNodes.size() + " new nodes.");
 
 		// If we have not computed any graph changes, we are done
 		if (expiredEdges.size() == 0 && newEdges.size() == 0) {
@@ -330,14 +332,7 @@ public class IDESolver<N,D,M,V,I extends InterproceduralCFG<N, M>> {
 		// We need to keep track of the records we have already updated.
 		// To avoid having to (costly) enlarge hash maps during the run, we
 		// use the current size as an estimate.
-		if (this.optimizationMode == OptimizationMode.Performance)
-			this.jumpSave = HashBasedTable.create(this.jumpFn.getTargetCount(),
-				this.jumpFn.getSourceValCount());
-		else if (this.optimizationMode == OptimizationMode.Memory)
-			this.jumpSave = HashBasedTable.create(this.jumpFn.getTargetCount(), 1);
-		else
-			throw new RuntimeException("Unknown optimization mode");
-
+		this.jumpSave = new HashMap<N, Set<D>>(this.jumpFn.getTargetCount());
 		this.changedNodes = new ConcurrentHashSet<N>((int) this.propagationCount);
 		this.propagationCount = 0;
 		
@@ -488,11 +483,13 @@ public class IDESolver<N,D,M,V,I extends InterproceduralCFG<N, M>> {
 		System.out.println("Phase 2: Recomputed " + edgeIdx + " join edges in "
 				+ (System.nanoTime() - prePhase2) / 1E9 + " seconds");
 
-		System.out.println("Processing worklist for values...");
+		System.out.println("Phase 3: Processing worklist for values...");
+		long beforeVals = System.nanoTime();
 		val.clear();
 		executor = getExecutor();
 		awaitCompletionComputeValuesAndShutdown(true);
-		System.out.println("Worklist processing done, " + propagationCount + " edges processed.");
+		System.out.println("Phase 3: Worklist processing done, " + propagationCount + " edges processed"
+				+ " in " + (System.nanoTime() - beforeVals) / 1E9 + " seconds.");
 		
 		this.changedNodes = null;
 	}
@@ -906,64 +903,42 @@ public class IDESolver<N,D,M,V,I extends InterproceduralCFG<N, M>> {
 	private void clearAndPropagate(D sourceVal, N target, D targetVal, EdgeFunction<V> f) {
 		assert operationMode == OperationMode.Update;
 		
-		boolean newFunction = false;
-		synchronized (jumpFn) {
-			synchronized (jumpSave) {
-				Map<D, EdgeFunction<V>> savedFacts = this.jumpSave.get(target, sourceVal);
-				if (savedFacts == null) {
-					// We have not processed this edge yet. Record the original data
-					// so that we can later check whether our re-processing has changed
-					// anything
-					Map<D, EdgeFunction<V>> targetDs = new HashMap<D, EdgeFunction<V>>
-						(this.jumpFn.forwardLookup(sourceVal, target));
-					this.jumpSave.put(target, sourceVal, targetDs);
+		synchronized (jumpSave) {
+			Set<D> savedFacts = this.jumpSave.get(target);
+			if (savedFacts == null || !savedFacts.contains(sourceVal)) {
+				// We have not processed this edge yet
+				Utils.addElementToMapSet(this.jumpSave, target, sourceVal);
 	
-					// Delete the original facts
-					for (D d : targetDs.keySet())
+				// Delete the original facts
+				synchronized (jumpFn) {
+					for (D d : new HashSet<D>(this.jumpFn.forwardLookup(sourceVal, target).keySet()))
 						this.jumpFn.removeFunction(sourceVal, target, d);
-					synchronized (changedNodes) {
-						this.changedNodes.add(target);
-					}
 				}
-		
-				// If the function with which we are coming in right now is different
-				// from what we already have as the "new" jump function, we need to
-				// record it.
-				EdgeFunction<V> jumpFnE = jumpFn.reverseLookup(target, targetVal).get(sourceVal);
-				if(jumpFnE==null) jumpFnE = allTop; //JumpFn is initialized to all-top (see line [2] in SRH96 paper)
-				EdgeFunction<V> fPrime = jumpFnE.joinWith(f);
-				if (!fPrime.equalTo(jumpFnE)) {
-					jumpFn.addFunction(sourceVal, target, targetVal, fPrime);
-					newFunction = true;
+				synchronized (changedNodes) {
+					this.changedNodes.add(target);
 				}
 			}
 		}
-		if (newFunction) {
-			PathEdge<N,D,M> edge = new PathEdge<N,D,M>(sourceVal, target, targetVal);
-			scheduleEdgeProcessing(edge);
-		}
+		propagate(sourceVal, target, targetVal, f);
 	}
 
 	private void clearAndPropagate(D sourceVal, N target) {
 		assert operationMode == OperationMode.Update;
 		
-		synchronized (jumpFn) {
-			synchronized (jumpSave) {
-				if (!this.jumpSave.contains(target, sourceVal)) {
-					// We have not processed this edge yet. Record the original data
-					// so that we can later check whether our re-processing has changed
-					// anything
-					Map<D, EdgeFunction<V>> targetDs = new HashMap<D, EdgeFunction<V>>
-						(this.jumpFn.forwardLookup(sourceVal, target));
-					this.jumpSave.put(target, sourceVal, targetDs);
+		synchronized (jumpSave) {
+			Set<D> savedFacts = this.jumpSave.get(target);
+			if (savedFacts == null || !savedFacts.contains(sourceVal)) {
+				// We have not processed this edge yet
+				Utils.addElementToMapSet(this.jumpSave, target, sourceVal);
 	
-					// Delete the original facts
-					for (D d : targetDs.keySet())
+				// Delete the original facts
+				synchronized (jumpFn) {
+					for (D d : new HashSet<D>(this.jumpFn.forwardLookup(sourceVal, target).keySet()))
 						this.jumpFn.removeFunction(sourceVal, target, d);
-					synchronized (changedNodes) {
-						this.changedNodes.add(target);
-						scheduleEdgeProcessing(new PathEdge<N, D, M>(sourceVal, target, null));
-					}
+				}
+				synchronized (changedNodes) {
+					this.changedNodes.add(target);
+					scheduleEdgeProcessing(new PathEdge<N, D, M>(sourceVal, target, null));
 				}
 			}
 		}
@@ -974,6 +949,7 @@ public class IDESolver<N,D,M,V,I extends InterproceduralCFG<N, M>> {
 	 */
 	private void computeValues() {	
 		//Phase II(i)
+		long beforePhase1 = System.nanoTime();
 		D zeroValue = this.tabulationProblem.zeroValue();
 		for(N startPoint: initialSeeds) {
 			setVal(startPoint, zeroValue, valueLattice.bottomElement());
@@ -987,9 +963,11 @@ public class IDESolver<N,D,M,V,I extends InterproceduralCFG<N, M>> {
 		} catch (InterruptedException e) {
 			e.printStackTrace();
 		}
+		System.out.println("Phase V1 took " + (System.nanoTime() - beforePhase1) / 1E9 + " seconds.");
 		
 		//Phase II(ii)
 		//we create an array of all nodes and then dispatch fractions of this array to multiple threads
+		long beforePhase2 = System.nanoTime();
 		Set<N> allNonCallStartNodes = icfg().allNonCallStartNodes();
 		@SuppressWarnings("unchecked")
 		N[] nonCallStartNodesArray = (N[]) new Object[allNonCallStartNodes.size()];
@@ -1009,6 +987,7 @@ public class IDESolver<N,D,M,V,I extends InterproceduralCFG<N, M>> {
 		} catch (InterruptedException e) {
 			e.printStackTrace();
 		}
+		System.out.println("Phase V2 took " + (System.nanoTime() - beforePhase2) / 1E9 + " seconds.");
 	}
 
 	private void propagateValueAtStart(Pair<N, D> nAndD, N n) {

@@ -26,7 +26,8 @@ import com.google.common.collect.MapMaker;
 public abstract class AbstractUpdatableInterproceduralCFG<N,M>
 		implements UpdatableInterproceduralCFG<N, M> {
 
-	public static final boolean BROADCAST_NOTIFICATIONS = true;
+	private static final int DEFAULT_CAPACITY = 10000;
+	private static final boolean BROADCAST_NOTIFICATIONS = true;
 
 	private final LoadingCache<Object, UpdatableWrapper<?>> wrappedObjects;
 	private final Map<Object, Set<CFGChangeListener>> objectListeners;
@@ -35,8 +36,12 @@ public abstract class AbstractUpdatableInterproceduralCFG<N,M>
 	private final BiDiInterproceduralCFG<N, M> baseCFG;
 	
 	public AbstractUpdatableInterproceduralCFG() {
+		this(DEFAULT_CAPACITY);
+	}
+	
+	public AbstractUpdatableInterproceduralCFG(int capacity) {
 		CacheBuilder<Object, Object> cb = CacheBuilder.newBuilder().concurrencyLevel
-				(Runtime.getRuntime().availableProcessors()).initialCapacity(100000); //.weakKeys();		
+				(Runtime.getRuntime().availableProcessors()).initialCapacity(capacity); //.weakKeys();		
 		wrappedObjects = cb.build(new CacheLoader<Object, UpdatableWrapper<?>>() {
 
 			@SuppressWarnings({ "unchecked", "rawtypes" })
@@ -171,7 +176,7 @@ public abstract class AbstractUpdatableInterproceduralCFG<N,M>
 	@Override
 	public <X> List<UpdatableWrapper<X>> wrap(List<X> list) {
 		assert list != null;
-		List<UpdatableWrapper<X>> resList = new ArrayList<UpdatableWrapper<X>>();
+		List<UpdatableWrapper<X>> resList = new ArrayList<UpdatableWrapper<X>>(list.size());
 		for (X x : list)
 			resList.add(wrap(x));
 		return resList;
@@ -264,6 +269,16 @@ public abstract class AbstractUpdatableInterproceduralCFG<N,M>
 	@Override
 	public List<UpdatableWrapper<N>> getPredsOf(UpdatableWrapper<N> n) {
 		return wrap(baseCFG.getPredsOf(n.getContents()));
+	}
+	
+	/**
+	 * Gets the number of elements in this interprocedural CFG. This can be used
+	 * as an indicator for the required capacity of derived CFGs, e.g. when
+	 * performing incremental updates.
+	 * @return The number of elements in this CFG.
+	 */
+	public long size() {
+		return this.wrappedObjects.size();
 	}
 
 }
