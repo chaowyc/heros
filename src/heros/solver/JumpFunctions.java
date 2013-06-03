@@ -201,7 +201,6 @@ public class JumpFunctions<N,D,L> {
 	 * @return The number of target units in this cache
 	 */
 	int getTargetCount() {
-		assert nonEmptyForwardLookup.size() == nonEmptyReverseLookup.size();
 		return nonEmptyForwardLookup.size();
 	}
 	

@@ -286,18 +286,7 @@ public class IDESolver<N,D,M,V,I extends InterproceduralCFG<N, M>> {
 			throw new UnsupportedOperationException("Current CFG does not support incremental updates");
 		if (!(newCFG instanceof UpdatableInterproceduralCFG))
 			throw new UnsupportedOperationException("New CFG does not support incremental updates");
-
-		// We need to keep track of the records we have already updated.
-		// To avoid having to (costly) enlarge hash maps during the run, we
-		// use the current size as an estimate.
-		if (this.optimizationMode == OptimizationMode.Performance)
-			this.jumpSave = HashBasedTable.create(this.jumpFn.getTargetCount(),
-				this.jumpFn.getSourceValCount());
-		else if (this.optimizationMode == OptimizationMode.Memory)
-			this.jumpSave = HashBasedTable.create(this.jumpFn.getTargetCount(), 1);
-		else
-			throw new RuntimeException("Unknown optimization mode");
-		
+	
 		// Update the control flow graph
 		UpdatableInterproceduralCFG<N, M> oldcfg = (UpdatableInterproceduralCFG<N, M>) icfg();
 		UpdatableInterproceduralCFG<N, M> newcfg = (UpdatableInterproceduralCFG<N, M>) newCFG;
@@ -338,6 +327,17 @@ public class IDESolver<N,D,M,V,I extends InterproceduralCFG<N, M>> {
 			return;
 		}
 
+		// We need to keep track of the records we have already updated.
+		// To avoid having to (costly) enlarge hash maps during the run, we
+		// use the current size as an estimate.
+		if (this.optimizationMode == OptimizationMode.Performance)
+			this.jumpSave = HashBasedTable.create(this.jumpFn.getTargetCount(),
+				this.jumpFn.getSourceValCount());
+		else if (this.optimizationMode == OptimizationMode.Memory)
+			this.jumpSave = HashBasedTable.create(this.jumpFn.getTargetCount(), 1);
+		else
+			throw new RuntimeException("Unknown optimization mode");
+
 		this.changedNodes = new ConcurrentHashSet<N>((int) this.propagationCount);
 		this.propagationCount = 0;
 		
@@ -349,15 +349,31 @@ public class IDESolver<N,D,M,V,I extends InterproceduralCFG<N, M>> {
 			// Expired nodes should not have been updated
 			assert !n.hasPreviousContents();
 
-			this.jumpFn.removeByTarget(n.getContents());
-			Utils.removeElementFromTable(this.incoming, n.getContents());
-			Utils.removeElementFromTable(this.endSummary, n.getContents());
+			this.jumpFn.removeByTarget((N) n);
+			Utils.removeElementFromTable(this.incoming, (N) n);
+			Utils.removeElementFromTable(this.endSummary, (N) n);
 
 			for (Cell<N, D, Map<N, Set<D>>> cell : incoming.cellSet())
 				cell.getValue().remove(n);
 			for (Cell<N, D, Table<N, D, EdgeFunction<V>>> cell : endSummary.cellSet())
-				Utils.removeElementFromTable(cell.getValue(), n.getContents());
+				Utils.removeElementFromTable(cell.getValue(), (N) n);
 		}
+		for (Cell<N, D, Map<N, Set<D>>> cell : incoming.cellSet())
+			for (N nx : cell.getValue().keySet())  {
+				if (!newcfg.containsStmt((UpdatableWrapper<N>) nx)) {
+					boolean found = false;
+					for (UpdatableWrapper<N> n : expiredNodes)
+						if (n.toString().equals(nx.toString())) {
+							found = true;
+							break;
+						}
+					assert found : "Missing " + nx;
+				}
+				/*
+				assert newcfg.containsStmt((UpdatableWrapper<N>) nx) :
+					"Failed for " + nx + " in " + oldcfg.getMethodOf((UpdatableWrapper<N>) nx);
+				*/
+			}
 		if (DEBUG)
 			System.out.println("Expired nodes removed in "
 					+ (System.nanoTime() - beforeRemove) / 1E9
@@ -375,12 +391,23 @@ public class IDESolver<N,D,M,V,I extends InterproceduralCFG<N, M>> {
 		if (!expiredEdges.isEmpty())
 			changeSet.putAll(updateEdges(expiredEdges, expiredNodes));
 		
+		int expiredEdgeCount = expiredEdges.size();
+		int newEdgeCount = newEdges.size();
+		expiredEdges = null;
+		expiredNodes = null;
+		newEdges = null;
+		newNodes = null;
+		oldcfg = null;
+//		Runtime.getRuntime().gc();		// save memory
+
 		// Construct the worklist for all entries in the change set
 		System.out.println("Processing worklist for edges...");
 		int edgeIdx = 0;
 		long beforeEdges = System.nanoTime();
 		for (M m : changeSet.keySet())
 			for (N preLoop : changeSet.get(m)) {
+				assert newcfg.containsStmt((UpdatableWrapper<N>) preLoop);
+				
 				// If a predecessor in the same method has already been
 				// the start point of a propagation, we can skip this one.
 				if (this.predecessorRepropagated(changeSet.get(m), preLoop))
@@ -412,13 +439,13 @@ public class IDESolver<N,D,M,V,I extends InterproceduralCFG<N, M>> {
 			}
 		
 		System.out.println("Phase 1: Actually processed " + edgeIdx + " of "
-				+ (newEdges.size() + expiredEdges.size()) + " changed edges in "
+				+ (newEdgeCount + expiredEdgeCount) + " changed edges in "
 				+ (System.nanoTime() - beforeEdges) / 1E9 + " seconds");
 
 		// Phase 2: Make sure that all incoming edges to join points are considered
 		edgeIdx = 0;
 		executor = getExecutor();
-
+		
 		long prePhase2 = System.nanoTime();
 		operationMode = OperationMode.Compute;
 		UpdatableInterproceduralCFG<N, M> icfg = (UpdatableInterproceduralCFG<N, M>) icfg();
