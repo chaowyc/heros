@@ -297,13 +297,18 @@ public class IDESolver<N,D,M,V,I extends InterproceduralCFG<N, M>> {
 		if (DEBUG)
 			System.out.println("Computing changeset...");
 
+		int edgeCount = this.optimizationMode == OptimizationMode.Performance ?
+				jumpFn.getEdgeCount() : 5000;
+		int nodeCount = this.optimizationMode == OptimizationMode.Performance ?
+				jumpFn.getTargetCount() : 5000;
+		
 		// Next, we need to create a change set on the control flow graph
 		Map<UpdatableWrapper<N>, List<UpdatableWrapper<N>>> expiredEdges =
-				new HashMap<UpdatableWrapper<N>, List<UpdatableWrapper<N>>>(5000);
+				new HashMap<UpdatableWrapper<N>, List<UpdatableWrapper<N>>>(edgeCount);
 		Map<UpdatableWrapper<N>, List<UpdatableWrapper<N>>> newEdges =
-				new HashMap<UpdatableWrapper<N>, List<UpdatableWrapper<N>>>(5000);
-		Set<UpdatableWrapper<N>> newNodes = new HashSet<UpdatableWrapper<N>>(100);
-		Set<UpdatableWrapper<N>> expiredNodes = new HashSet<UpdatableWrapper<N>>(100);
+				new HashMap<UpdatableWrapper<N>, List<UpdatableWrapper<N>>>(edgeCount);
+		Set<UpdatableWrapper<N>> newNodes = new HashSet<UpdatableWrapper<N>>(nodeCount);
+		Set<UpdatableWrapper<N>> expiredNodes = new HashSet<UpdatableWrapper<N>>(nodeCount);
 		oldcfg.computeCFGChangeset(newcfg, expiredEdges, newEdges, newNodes,
 				expiredNodes);
 		
@@ -353,22 +358,6 @@ public class IDESolver<N,D,M,V,I extends InterproceduralCFG<N, M>> {
 			for (Cell<N, D, Table<N, D, EdgeFunction<V>>> cell : endSummary.cellSet())
 				Utils.removeElementFromTable(cell.getValue(), (N) n);
 		}
-		for (Cell<N, D, Map<N, Set<D>>> cell : incoming.cellSet())
-			for (N nx : cell.getValue().keySet())  {
-				if (!newcfg.containsStmt((UpdatableWrapper<N>) nx)) {
-					boolean found = false;
-					for (UpdatableWrapper<N> n : expiredNodes)
-						if (n.toString().equals(nx.toString())) {
-							found = true;
-							break;
-						}
-					assert found : "Missing " + nx;
-				}
-				/*
-				assert newcfg.containsStmt((UpdatableWrapper<N>) nx) :
-					"Failed for " + nx + " in " + oldcfg.getMethodOf((UpdatableWrapper<N>) nx);
-				*/
-			}
 		if (DEBUG)
 			System.out.println("Expired nodes removed in "
 					+ (System.nanoTime() - beforeRemove) / 1E9
@@ -388,10 +377,10 @@ public class IDESolver<N,D,M,V,I extends InterproceduralCFG<N, M>> {
 		
 		int expiredEdgeCount = expiredEdges.size();
 		int newEdgeCount = newEdges.size();
-		expiredEdges = null;
+		newNodes = null;
 		expiredNodes = null;
 		newEdges = null;
-		newNodes = null;
+		expiredEdges = null;
 		oldcfg = null;
 //		Runtime.getRuntime().gc();		// save memory
 

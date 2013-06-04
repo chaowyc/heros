@@ -201,7 +201,7 @@ public class JumpFunctions<N,D,L> {
 	 * @return The number of target units in this cache
 	 */
 	int getTargetCount() {
-		return nonEmptyForwardLookup.size();
+		return nonEmptyForwardLookup.columnKeySet().size();
 	}
 	
 	/**
@@ -211,6 +211,14 @@ public class JumpFunctions<N,D,L> {
 	 */
 	int getSourceValCount() {
 		return this.nonEmptyForwardLookup.rowKeySet().size();
+	}
+	
+	/**
+	 * Gets the number of edges stored in this table
+	 * @return The number of edges stored in this table
+	 */
+	int getEdgeCount() {
+		return this.nonEmptyForwardLookup.size();
 	}
 	
 }
