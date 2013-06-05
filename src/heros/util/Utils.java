@@ -136,13 +136,18 @@ public class Utils {
 	 * given table
 	 * @param table The table from which to remove the rows
 	 * @param element The key for which which to remove all rows from the table
+	 * @return True if at least one element was removed, otherwise false
 	 */
-	public static <X,Y,Z> void removeElementFromTable(Table<X, Y, Z> table, X element) {
+	public static <X,Y,Z> boolean removeElementFromTable(Table<X, Y, Z> table, X element) {
+		boolean found = false;
 		Iterator<Y> it = table.row(element).keySet().iterator();
 		while (it.hasNext()) {
 			it.next();
 			it.remove();
+			found = true;
 		}
+		assert !table.containsRow(element);
+		return found;
 	}
 	
 	public static void copyFile(String sourceFile, String destFile) throws IOException {

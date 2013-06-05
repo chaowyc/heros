@@ -352,6 +352,7 @@ public class IDESolver<N,D,M,V,I extends InterproceduralCFG<N, M>> {
 			this.jumpFn.removeByTarget((N) n);
 			Utils.removeElementFromTable(this.incoming, (N) n);
 			Utils.removeElementFromTable(this.endSummary, (N) n);
+			Utils.removeElementFromTable(this.val, (N) n);
 
 			for (Cell<N, D, Map<N, Set<D>>> cell : incoming.cellSet())
 				cell.getValue().remove(n);
@@ -363,9 +364,7 @@ public class IDESolver<N,D,M,V,I extends InterproceduralCFG<N, M>> {
 					+ (System.nanoTime() - beforeRemove) / 1E9
 					+ " seconds.");
 
-		// Process edge insertions. This will only do the incoming edges of new
-		// nodes as the outgoing ones will only be available after the incoming
-		// ones have been processed and the graph has been extended.
+		// Process edge insertions.
 		this.operationMode = OperationMode.Update;
 		changeSet = new HashMap<M, Set<N>>(newEdges.size() + expiredEdges.size());
 		if (!newEdges.isEmpty())
@@ -374,7 +373,7 @@ public class IDESolver<N,D,M,V,I extends InterproceduralCFG<N, M>> {
 		// Process edge deletions
 		if (!expiredEdges.isEmpty())
 			changeSet.putAll(updateEdges(expiredEdges, expiredNodes));
-		
+	
 		int expiredEdgeCount = expiredEdges.size();
 		int newEdgeCount = newEdges.size();
 		newNodes = null;
@@ -449,10 +448,8 @@ public class IDESolver<N,D,M,V,I extends InterproceduralCFG<N, M>> {
 			// direct ones (the statement above, goto origins) as well as return
 			// edges for which the current statement is the return site.
 			Set<N> preds = new HashSet<N>();
-			Set<N> exitStmts = new HashSet<N>();
 			for (UpdatableWrapper<N> n0 : icfg.getExitNodesForReturnSite((UpdatableWrapper<N>) n))
-				exitStmts.add((N) n0);
-			preds.addAll(exitStmts);
+				preds.add((N) n0);
 			for (UpdatableWrapper<N> n0 : icfg.getPredsOf((UpdatableWrapper<N>) n))
 				preds.add((N) n0);
 
@@ -472,6 +469,55 @@ public class IDESolver<N,D,M,V,I extends InterproceduralCFG<N, M>> {
 		System.out.println("Phase 2: Recomputed " + edgeIdx + " join edges in "
 				+ (System.nanoTime() - prePhase2) / 1E9 + " seconds");
 
+		
+		// Prune the old values
+		long beforePrune = System.nanoTime();
+		pruneExpiredValues(this.changedNodes, newcfg);
+		System.out.println("Phase 3.1: Values pruned in " + (System.nanoTime() - beforePrune) / 1E9
+				+ " seconds.");
+
+		long beforePhase1 = System.nanoTime();
+		executor = getExecutor();
+		for (N n : this.changedNodes)
+			for (N n0 : icfg().getStartPointsOf(icfg().getMethodOf(n)))
+				for (D dTarget: jumpFn.getTargetFactsAtTarget(n0)) {
+					Pair<N, D> superGraphNode = new Pair<N,D>(n0, dTarget);
+					scheduleValueProcessing(new ValuePropagationTask(superGraphNode));
+				}
+		try {
+			executor.awaitCompletion();
+		} catch (InterruptedException e) {
+			e.printStackTrace();
+		}
+		System.out.println("Phase 3.2: Value propagation done in "
+				+ (System.nanoTime() - beforePhase1) / 1E9 + " seconds.");
+		
+		//Phase II(ii)
+		//we create an array of all nodes and then dispatch fractions of this array to multiple threads
+		long beforePhase2 = System.nanoTime();
+		Set<N> allNonCallStartNodes = newCFG.allNonCallStartNodes();
+		@SuppressWarnings("unchecked")
+		N[] nonCallStartNodesArray = (N[]) new Object[allNonCallStartNodes.size()];
+		int i=0;
+		for (N n : allNonCallStartNodes) {
+			nonCallStartNodesArray[i] = n;
+			i++;
+		}
+		//No need to keep track of the number of tasks scheduled here, since we call shutdown
+		for(int t=0;t<numThreads; t++) {
+			ValueComputationTask task = new ValueComputationTask(nonCallStartNodesArray, t);
+			scheduleValueComputationTask(task);
+		}
+		//await termination of tasks
+		try {
+			executor.awaitCompletion();
+		} catch (InterruptedException e) {
+			e.printStackTrace();
+		}
+		System.out.println("Phase 3.3: Worklist processing done, " + propagationCount + " edges processed"
+				+ " in " + (System.nanoTime() - beforePhase2) / 1E9 + " seconds.");
+
+		/*
 		System.out.println("Phase 3: Processing worklist for values...");
 		long beforeVals = System.nanoTime();
 		val.clear();
@@ -479,8 +525,40 @@ public class IDESolver<N,D,M,V,I extends InterproceduralCFG<N, M>> {
 		awaitCompletionComputeValuesAndShutdown(true);
 		System.out.println("Phase 3: Worklist processing done, " + propagationCount + " edges processed"
 				+ " in " + (System.nanoTime() - beforeVals) / 1E9 + " seconds.");
+		*/
 		
 		this.changedNodes = null;
+	}
+
+	/**
+	 * Prunes all values that may have become outdated by updating the flow edges
+	 */
+	@SuppressWarnings("unchecked")
+	private void pruneExpiredValues(Set<N> changeSet, UpdatableInterproceduralCFG<N, M> cfg) {
+		// Starting from all changed nodes, remove all transitively reachable values
+		List<N> workQueue = new ArrayList<N>(this.val.size());
+		Set<N> doneSet = new HashSet<N>(this.val.size());
+		for (N n : changeSet)
+			workQueue.add(n);
+		while (!workQueue.isEmpty()) {
+			N n = workQueue.remove(0);
+			if (!doneSet.add(n))
+				continue;
+			if (Utils.removeElementFromTable(this.val, n))
+				for (UpdatableWrapper<N> n0 : cfg.getSuccsOf((UpdatableWrapper<N>) n))
+					if (!doneSet.contains(n0))
+						workQueue.add((N) n0);
+			if (icfg().isCallStmt(n))
+				for (M m : icfg().getCalleesOfCallAt(n)) {
+					for (N n0 : icfg().getStartPointsOf(m))
+						if (!doneSet.contains(n0))
+							workQueue.add(n0);
+				}
+		}
+		
+		// Make sure not to break the seeds
+		for(N startPoint: initialSeeds)
+			setVal(startPoint, tabulationProblem.zeroValue(), valueLattice.bottomElement());
 	}
 
 	/**
@@ -979,7 +1057,8 @@ public class IDESolver<N,D,M,V,I extends InterproceduralCFG<N, M>> {
 		System.out.println("Phase V2 took " + (System.nanoTime() - beforePhase2) / 1E9 + " seconds.");
 	}
 
-	private void propagateValueAtStart(Pair<N, D> nAndD, N n) {
+	private void propagateValueAtStart(Pair<N, D> nAndD) {
+		N n = nAndD.getO1();
 		D d = nAndD.getO2();		
 		M p = icfg().getMethodOf(n);
 		for(N c: icfg().getCallsFromWithin(p)) {					
@@ -997,7 +1076,8 @@ public class IDESolver<N,D,M,V,I extends InterproceduralCFG<N, M>> {
 		}
 	}
 	
-	private void propagateValueAtCall(Pair<N, D> nAndD, N n) {
+	private void propagateValueAtCall(Pair<N, D> nAndD) {
+		N n = nAndD.getO1();
 		D d = nAndD.getO2();
 		for(M q: icfg().getCalleesOfCallAt(n)) {
 			FlowFunction<D> callFlowFunction = flowFunctions.getCallFlowFunction(n, q);
@@ -1152,12 +1232,17 @@ public class IDESolver<N,D,M,V,I extends InterproceduralCFG<N, M>> {
 
 		public void run() {
 			N n = nAndD.getO1();
+			
+			if (n.toString().equals("virtualinvoke this.<org.junit.runner.JUnitCore: void addListener(org.junit.runner.notification.RunListener)>(listener)")
+					&& nAndD.getO2().toString().contains("listener"))
+				System.out.println("x");
+			
 			if(icfg().isStartPoint(n) ||
 				initialSeeds.contains(n)) { 		//our initial seeds are not necessarily method-start points but here they should be treated as such
-				propagateValueAtStart(nAndD, n);
+				propagateValueAtStart(nAndD);
 			}
 			if(icfg().isCallStmt(n)) {
-				propagateValueAtCall(nAndD, n);
+				propagateValueAtCall(nAndD);
 			}
 		}
 	}

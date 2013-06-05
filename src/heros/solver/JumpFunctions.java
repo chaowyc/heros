@@ -137,6 +137,18 @@ public class JumpFunctions<N,D,L> {
 	}
 	
 	/**
+	 * Gets all target facts defined at the given target node.
+	 * @param target The target node at which to get the target facts
+	 * @return The target facts at the given target node
+	 */
+	public Set<D> getTargetFactsAtTarget(N target) {
+		assert target!=null;
+		Table<D, D, EdgeFunction<L>> table = nonEmptyLookupByTargetNode.get(target);
+		if(table==null) return Collections.emptySet();
+		return table.columnKeySet();
+	}
+	
+	/**
 	 * Removes all entries from this table
 	 */
 	public void clear() {
