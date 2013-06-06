@@ -37,10 +37,12 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
+import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 
@@ -143,7 +145,7 @@ public class IDESolver<N,D,M,V,I extends InterproceduralCFG<N, M>> {
 	@DontSynchronize("stateless")
 	protected final EdgeFunction<V> allTop;
 
-	@DontSynchronize("only used by single thread - phase II not parallelized (yet)")
+	@SynchronizedBy("consistent lock on field")
 	protected final Table<N,D,V> val = HashBasedTable.create();	
 	
 	@DontSynchronize("benign races")
@@ -183,10 +185,12 @@ public class IDESolver<N,D,M,V,I extends InterproceduralCFG<N, M>> {
 	private OptimizationMode optimizationMode = OptimizationMode.Performance;
 
 	@DontSynchronize("concurrent data structure")
-	private Set<N> changedNodes = null;
+	private Map<N, Set<D>> changedNodes = null;
 
 	@DontSynchronize("only written by single thread")
 	private Map<M, Set<N>> changeSet = null;
+	
+	private int jumpSaveSize = 5000;
 	
 	/**
 	 * Creates a solver for the given problem, which caches flow functions and edge functions.
@@ -269,6 +273,7 @@ public class IDESolver<N,D,M,V,I extends InterproceduralCFG<N, M>> {
 			jumpFn.addFunction(zeroValue, startPoint, zeroValue, EdgeIdentity.<V>v());
 		}
 		awaitCompletionComputeValuesAndShutdown(this.computeValues);
+		System.out.println("Solver processed " + propagationCount + " edges.");
 	}
 	
 	/**
@@ -307,8 +312,8 @@ public class IDESolver<N,D,M,V,I extends InterproceduralCFG<N, M>> {
 				new HashMap<UpdatableWrapper<N>, List<UpdatableWrapper<N>>>(edgeCount);
 		Map<UpdatableWrapper<N>, List<UpdatableWrapper<N>>> newEdges =
 				new HashMap<UpdatableWrapper<N>, List<UpdatableWrapper<N>>>(edgeCount);
-		Set<UpdatableWrapper<N>> newNodes = new HashSet<UpdatableWrapper<N>>(nodeCount);
-		Set<UpdatableWrapper<N>> expiredNodes = new HashSet<UpdatableWrapper<N>>(nodeCount);
+		Set<UpdatableWrapper<N>> newNodes = new ConcurrentHashSet<UpdatableWrapper<N>>(nodeCount);
+		Set<UpdatableWrapper<N>> expiredNodes = new ConcurrentHashSet<UpdatableWrapper<N>>(nodeCount);
 		oldcfg.computeCFGChangeset(newcfg, expiredEdges, newEdges, newNodes,
 				expiredNodes);
 		
@@ -337,14 +342,14 @@ public class IDESolver<N,D,M,V,I extends InterproceduralCFG<N, M>> {
 		// We need to keep track of the records we have already updated.
 		// To avoid having to (costly) enlarge hash maps during the run, we
 		// use the current size as an estimate.
-		this.jumpSave = new HashMap<N, Set<D>>(this.jumpFn.getTargetCount());
-		this.changedNodes = new ConcurrentHashSet<N>((int) this.propagationCount);
+		this.jumpSave = new ConcurrentHashMap<N, Set<D>>(this.jumpFn.getTargetCount());
+		this.jumpSaveSize = this.jumpFn.getSourceValCount();
+		this.changedNodes = new ConcurrentHashMap<N, Set<D>>((int) this.propagationCount);
 		this.propagationCount = 0;
 		
 		// Make sure we don't cache any expired nodes
 		long beforeRemove = System.nanoTime();
-		if (DEBUG)
-			System.out.println("Removing " + expiredNodes.size() + " expired nodes...");
+		System.out.println("Removing " + expiredNodes.size() + " expired nodes...");
 		for (UpdatableWrapper<N> n : expiredNodes) {
 			// Expired nodes should not have been updated
 			assert !n.hasPreviousContents();
@@ -353,16 +358,18 @@ public class IDESolver<N,D,M,V,I extends InterproceduralCFG<N, M>> {
 			Utils.removeElementFromTable(this.incoming, (N) n);
 			Utils.removeElementFromTable(this.endSummary, (N) n);
 			Utils.removeElementFromTable(this.val, (N) n);
-
+		}
+		// Loop twice for not having to process the children of rows that get
+		// deleted anyway
+		for (UpdatableWrapper<N> n : expiredNodes) {
 			for (Cell<N, D, Map<N, Set<D>>> cell : incoming.cellSet())
 				cell.getValue().remove(n);
 			for (Cell<N, D, Table<N, D, EdgeFunction<V>>> cell : endSummary.cellSet())
 				Utils.removeElementFromTable(cell.getValue(), (N) n);
 		}
-		if (DEBUG)
-			System.out.println("Expired nodes removed in "
-					+ (System.nanoTime() - beforeRemove) / 1E9
-					+ " seconds.");
+		System.out.println("Expired nodes removed in "
+				+ (System.nanoTime() - beforeRemove) / 1E9
+				+ " seconds.");
 
 		// Process edge insertions.
 		this.operationMode = OperationMode.Update;
@@ -373,7 +380,8 @@ public class IDESolver<N,D,M,V,I extends InterproceduralCFG<N, M>> {
 		// Process edge deletions
 		if (!expiredEdges.isEmpty())
 			changeSet.putAll(updateEdges(expiredEdges, expiredNodes));
-	
+		
+		System.out.println("Constructed a change set of " + changeSet.size() + " nodes.");
 		int expiredEdgeCount = expiredEdges.size();
 		int newEdgeCount = newEdges.size();
 		newNodes = null;
@@ -384,9 +392,12 @@ public class IDESolver<N,D,M,V,I extends InterproceduralCFG<N, M>> {
 //		Runtime.getRuntime().gc();		// save memory
 
 		// Construct the worklist for all entries in the change set
-		System.out.println("Processing worklist for edges...");
+		System.out.println("Preparing worklist for edges...");
 		int edgeIdx = 0;
 		long beforeEdges = System.nanoTime();
+		this.operationMode = OperationMode.Update;
+
+		List<PathEdge<N,D,M>> runList = new LinkedList<PathEdge<N,D,M>>();
 		for (M m : changeSet.keySet())
 			for (N preLoop : changeSet.get(m)) {
 				assert newcfg.containsStmt((UpdatableWrapper<N>) preLoop);
@@ -395,44 +406,50 @@ public class IDESolver<N,D,M,V,I extends InterproceduralCFG<N, M>> {
 				// the start point of a propagation, we can skip this one.
 				if (this.predecessorRepropagated(changeSet.get(m), preLoop))
 					continue;
-				// If another propagation has already visited this node,
-				// starting a new propagation from here cannot create
-				// any fact changes.
-				if (changedNodes.contains(preLoop))
-					continue;
 				
-				executor = getExecutor();
-				edgeIdx++;
-				
+				boolean hasEdge = false;
 				for (Cell<D, D, EdgeFunction<V>> srcEntry : jumpFn.lookupByTarget(preLoop)) {
 					D srcD = srcEntry.getRowKey();
 					D tgtD = srcEntry.getColumnKey();
 	
+					// If another propagation has already visited this node,
+					// starting a new propagation from here cannot create
+					// any fact changes.
+					Set<D> alreadyPropagated = changedNodes.get(preLoop);
+					if (alreadyPropagated != null && alreadyPropagated.contains(srcD))
+						continue;
+					hasEdge = true;
+	
 					if (DEBUG)
 						System.out.println("Reprocessing edge: <" + srcD
 								+ "> -> <" + preLoop + ", " + tgtD + ">");
-					scheduleEdgeProcessing(new PathEdge<N,D,M>(srcD, preLoop, tgtD));	
+					runList.add(new PathEdge<N,D,M>(srcD, preLoop, tgtD));
 				}
-			
-				if (DEBUG)
-					System.out.println("Processing worklist for method " + m + "...");
-				this.operationMode = OperationMode.Update;
-				this.jumpSave.clear();
-				awaitCompletionComputeValuesAndShutdown(false);
+				if (hasEdge)
+					edgeIdx++;
 			}
 		
+		// Start the propagations and wait until they are completed
+		System.out.println("Processing worklist for " + edgeIdx + " edges "
+				+ "(" + runList.size() + " exploded edges) in "
+				+ changeSet.size() + " methods...");
+		this.jumpSave.clear();
+		executor = getExecutor();
+		while (!runList.isEmpty())
+			scheduleEdgeProcessing(runList.remove(0));
+		awaitCompletionComputeValuesAndShutdown(false);
+		
 		System.out.println("Phase 1: Actually processed " + edgeIdx + " of "
-				+ (newEdgeCount + expiredEdgeCount) + " changed edges in "
+				+ (newEdgeCount + expiredEdgeCount) + " changed edges ("
+				+ propagationCount + " exploded edges) in "
 				+ (System.nanoTime() - beforeEdges) / 1E9 + " seconds");
 
-		// Phase 2: Make sure that all incoming edges to join points are considered
-		edgeIdx = 0;
-		executor = getExecutor();
-		
+		// Phase 2: Make sure that all incoming edges to join points are considered		
 		long prePhase2 = System.nanoTime();
+		edgeIdx = 0;
 		operationMode = OperationMode.Compute;
-		UpdatableInterproceduralCFG<N, M> icfg = (UpdatableInterproceduralCFG<N, M>) icfg();
-		for (N n : this.changedNodes) {
+
+		for (N n : this.changedNodes.keySet()) {
 			// If this is an exit node and we have an old end summary, we
 			// need to delete it as well
 			if (icfg().isExitStmt(n))
@@ -448,9 +465,9 @@ public class IDESolver<N,D,M,V,I extends InterproceduralCFG<N, M>> {
 			// direct ones (the statement above, goto origins) as well as return
 			// edges for which the current statement is the return site.
 			Set<N> preds = new HashSet<N>();
-			for (UpdatableWrapper<N> n0 : icfg.getExitNodesForReturnSite((UpdatableWrapper<N>) n))
+			for (UpdatableWrapper<N> n0 : newcfg.getExitNodesForReturnSite((UpdatableWrapper<N>) n))
 				preds.add((N) n0);
-			for (UpdatableWrapper<N> n0 : icfg.getPredsOf((UpdatableWrapper<N>) n))
+			for (UpdatableWrapper<N> n0 : newcfg.getPredsOf((UpdatableWrapper<N>) n))
 				preds.add((N) n0);
 
 			// If we have only one predecessor, there is no second path we need
@@ -462,23 +479,27 @@ public class IDESolver<N,D,M,V,I extends InterproceduralCFG<N, M>> {
 			
 			for (N pred : preds)
 				for (Cell<D, D, EdgeFunction<V>> cell : jumpFn.lookupByTarget(pred))
-					scheduleEdgeProcessing(new PathEdge<N,D,M>(cell.getRowKey(), pred, cell.getColumnKey()));
+					runList.add(new PathEdge<N,D,M>(cell.getRowKey(), pred, cell.getColumnKey()));
 		}
-		this.operationMode = OperationMode.Compute;
+		
+		// Process the worklist
+		executor = getExecutor();
+		while (!runList.isEmpty())
+			scheduleEdgeProcessing(runList.remove(0));
 		awaitCompletionComputeValuesAndShutdown(false);
+		
 		System.out.println("Phase 2: Recomputed " + edgeIdx + " join edges in "
 				+ (System.nanoTime() - prePhase2) / 1E9 + " seconds");
 
-		
 		// Prune the old values
 		long beforePrune = System.nanoTime();
-		pruneExpiredValues(this.changedNodes, newcfg);
+		pruneExpiredValues(this.changedNodes.keySet(), newcfg);
 		System.out.println("Phase 3.1: Values pruned in " + (System.nanoTime() - beforePrune) / 1E9
 				+ " seconds.");
 
 		long beforePhase1 = System.nanoTime();
 		executor = getExecutor();
-		for (N n : this.changedNodes)
+		for (N n : this.changedNodes.keySet())
 			for (N n0 : icfg().getStartPointsOf(icfg().getMethodOf(n)))
 				for (D dTarget: jumpFn.getTargetFactsAtTarget(n0)) {
 					Pair<N, D> superGraphNode = new Pair<N,D>(n0, dTarget);
@@ -527,6 +548,7 @@ public class IDESolver<N,D,M,V,I extends InterproceduralCFG<N, M>> {
 				+ " in " + (System.nanoTime() - beforeVals) / 1E9 + " seconds.");
 		*/
 		
+		this.changeSet = null;
 		this.changedNodes = null;
 	}
 
@@ -589,11 +611,12 @@ public class IDESolver<N,D,M,V,I extends InterproceduralCFG<N, M>> {
 			else
 				preds.addAll((Collection<N>) icfg.getPredsOf(loopStart));
 			
-			for (N preLoop : preds) {
-				// Do not propagate a node more than once
-				M m = icfg().getMethodOf((N) preLoop);
-				Utils.addElementToMapSet(newMethodEdges, m, preLoop);
-			}
+			for (N preLoop : preds)
+				if (!newNodes.contains(preLoop)){
+					// Do not propagate a node more than once
+					M m = icfg().getMethodOf((N) preLoop);
+					Utils.addElementToMapSet(newMethodEdges, m, preLoop);
+				}
 		}
 		return newMethodEdges;
 	}
@@ -715,14 +738,14 @@ public class IDESolver<N,D,M,V,I extends InterproceduralCFG<N, M>> {
 		//for each possible callee
 		Set<M> callees = icfg().getCalleesOfCallAt(n);
 		for(M sCalledProcN: callees) { //still line 14
-			
 			//compute the call-flow function
 			FlowFunction<D> function = flowFunctions.getCallFlowFunction(n, sCalledProcN);
 			flowFunctionConstructionCount++;
 			Set<D> res = function.computeTargets(d2);
 			
 			//for each callee's start point(s)
-			for(N sP: icfg().getStartPointsOf(sCalledProcN)) {					
+			List<N> startPointsOf = icfg().getStartPointsOf(sCalledProcN);
+			for(N sP: startPointsOf) {					
 				//for each result node of the call-flow function
 				for(D d3: res) {
 					//create initial self-loop
@@ -734,7 +757,7 @@ public class IDESolver<N,D,M,V,I extends InterproceduralCFG<N, M>> {
 						//line 15.1 of Naeem/Lhotak/Rodriguez
 						addIncoming(sP,d3,n,d2);
 						//line 15.2, copy to avoid concurrent modification exceptions by other threads
-						endSumm = new HashSet<Table.Cell<N,D,EdgeFunction<V>>>(endSummary(sP, d3));						
+						endSumm = new HashSet<Table.Cell<N,D,EdgeFunction<V>>>(endSummary(sP, d3));
 					}
 					
 					//still line 15.2 of Naeem/Lhotak/Rodriguez
@@ -758,7 +781,7 @@ public class IDESolver<N,D,M,V,I extends InterproceduralCFG<N, M>> {
 								EdgeFunction<V> f5 = edgeFunctions.getReturnEdgeFunction(n, sCalledProcN, eP, d4, retSiteN, d5);
 								EdgeFunction<V> fPrime = f4.composeWith(fCalleeSummary).composeWith(f5);							
 								if (operationMode == OperationMode.Update)
-									clearAndPropagate(d1, retSiteN, d3, f.composeWith(fPrime));
+									clearAndPropagate(d1, retSiteN, d5, f.composeWith(fPrime));
 								else
 									propagate(d1, retSiteN, d5, f.composeWith(fPrime));
 							}
@@ -804,25 +827,75 @@ public class IDESolver<N,D,M,V,I extends InterproceduralCFG<N, M>> {
 		final D d1 = edge.factAtSource();
 		final D d2 = edge.factAtTarget();
 		
-		//for each of the method's start points
-		for(N sP: icfg().getStartPointsOf(methodThatNeedsSummary)) {
+		//for each of the method's start points, determine incoming calls
+		List<N> startPointsOf = icfg().getStartPointsOf(methodThatNeedsSummary);
+		Set<Entry<N,Set<D>>> inc = new HashSet<Map.Entry<N,Set<D>>>();
+		for(N sP: startPointsOf) {
 			//line 21.1 of Naeem/Lhotak/Rodriguez
 			
 			//register end-summary
-			Set<Entry<N, Set<D>>> inc;
 			synchronized (incoming) {
 				if (d2 != null)
 					addEndSummary(sP, d1, n, d2, f);
 				//copy to avoid concurrent modification exceptions by other threads
-				inc = new HashSet<Map.Entry<N,Set<D>>>(incoming(d1, sP));
+				inc.addAll(incoming(d1, sP));
 			}
-			
-			//for each incoming call edge already processed
-			//(see processCall(..))
-			for (Entry<N,Set<D>> entry: inc) {
-				//line 22
-				N c = entry.getKey();
-				//for each return site
+		}
+		
+		//for each incoming call edge already processed
+		//(see processCall(..))
+		for (Entry<N,Set<D>> entry: inc) {
+			//line 22
+			N c = entry.getKey();
+			//for each return site
+			for(N retSiteC: icfg().getReturnSitesOfCallAt(c)) {
+				// Do not return into a method if there is a predecessor that
+				// will be changed later anyway
+				if (operationMode == OperationMode.Update)
+					if (predecessorRepropagated(this.changeSet.get(icfg().getMethodOf(retSiteC)), retSiteC))
+						continue;
+				// If we have a null fact, there is nothing to return
+				if (d2 == null) {
+					clearAndPropagate(d1, retSiteC);
+					continue;
+				}
+
+				//compute return-flow function
+				FlowFunction<D> retFunction = flowFunctions.getReturnFlowFunction(c, methodThatNeedsSummary,n,retSiteC);
+				flowFunctionConstructionCount++;
+				Set<D> targets = retFunction.computeTargets(d2);
+				//for each incoming-call value
+				for(D d4: entry.getValue()) {
+					//for each target value at the return site
+					//line 23
+					for(D d5: targets) {
+						//compute composed function
+						EdgeFunction<V> f4 = edgeFunctions.getCallEdgeFunction(c, d4, icfg().getMethodOf(n), d1);
+						EdgeFunction<V> f5 = edgeFunctions.getReturnEdgeFunction(c, icfg().getMethodOf(n), n, d2, retSiteC, d5);
+						EdgeFunction<V> fPrime = f4.composeWith(f).composeWith(f5);
+						//for each jump function coming into the call, propagate to return site using the composed function
+						for(Map.Entry<D,EdgeFunction<V>> valAndFunc: jumpFn.reverseLookup(c,d4).entrySet()) {
+							EdgeFunction<V> f3 = valAndFunc.getValue();
+							if(!f3.equalTo(allTop)) {
+								D d3 = valAndFunc.getKey();
+								if (operationMode == OperationMode.Update)
+									clearAndPropagate(d3, retSiteC, d5, f3.composeWith(fPrime));
+								else
+									propagate(d3, retSiteC, d5, f3.composeWith(fPrime));
+							}
+						}
+					}
+					if (operationMode == OperationMode.Update && targets.isEmpty())
+						for(D d3 : jumpFn.reverseLookup(c,d4).keySet())
+							clearAndPropagate(d3, retSiteC);
+				}
+			}
+		}
+		
+		//handling for unbalanced problems where we return out of a method whose call was never processed
+		if(inc.isEmpty() && followReturnsPastSeeds) {
+			Set<N> callers = icfg().getCallersOf(methodThatNeedsSummary);
+			for(N c: callers) {
 				for(N retSiteC: icfg().getReturnSitesOfCallAt(c)) {
 					// Do not return into a method if there is a predecessor that
 					// will be changed later anyway
@@ -835,62 +908,24 @@ public class IDESolver<N,D,M,V,I extends InterproceduralCFG<N, M>> {
 						continue;
 					}
 
-					//compute return-flow function
 					FlowFunction<D> retFunction = flowFunctions.getReturnFlowFunction(c, methodThatNeedsSummary,n,retSiteC);
 					flowFunctionConstructionCount++;
 					Set<D> targets = retFunction.computeTargets(d2);
-					//for each incoming-call value
-					for(D d4: entry.getValue()) {
-						//for each target value at the return site
-						//line 23
-						for(D d5: targets) {
-							//compute composed function
-							EdgeFunction<V> f4 = edgeFunctions.getCallEdgeFunction(c, d4, icfg().getMethodOf(n), d1);
-							EdgeFunction<V> f5 = edgeFunctions.getReturnEdgeFunction(c, icfg().getMethodOf(n), n, d2, retSiteC, d5);
-							EdgeFunction<V> fPrime = f4.composeWith(f).composeWith(f5);
-							//for each jump function coming into the call, propagate to return site using the composed function
-							for(Map.Entry<D,EdgeFunction<V>> valAndFunc: jumpFn.reverseLookup(c,d4).entrySet()) {
-								EdgeFunction<V> f3 = valAndFunc.getValue();
-								if(!f3.equalTo(allTop)) {
-									D d3 = valAndFunc.getKey();
-									if (operationMode == OperationMode.Update)
-										clearAndPropagate(d3, retSiteC, d5, f3.composeWith(fPrime));
-									else
-										propagate(d3, retSiteC, d5, f3.composeWith(fPrime));
-								}
-							}
-						}
-						if (operationMode == OperationMode.Update && targets.isEmpty())
-							for(D d3 : jumpFn.reverseLookup(c,d4).keySet())
-								clearAndPropagate(d3, retSiteC);
+					for(D d5: targets) {
+						EdgeFunction<V> f5 = edgeFunctions.getReturnEdgeFunction(c, icfg().getMethodOf(n), n, d2, retSiteC, d5);
+						if (operationMode == OperationMode.Update)
+							clearAndPropagate(d2, retSiteC, d5, f.composeWith(f5));
+						else
+							propagate(d2, retSiteC, d5, f.composeWith(f5));
 					}
+					if (operationMode == OperationMode.Update && targets.isEmpty())
+						clearAndPropagate(d2, retSiteC);
 				}
 			}
-			
-			//handling for unbalanced problems where we return out of a method whose call was never processed
-			if(inc.isEmpty() && followReturnsPastSeeds) {
-				Set<N> callers = icfg().getCallersOf(methodThatNeedsSummary);
-				for(N c: callers) {
-					for(N retSiteC: icfg().getReturnSitesOfCallAt(c)) {
-						FlowFunction<D> retFunction = flowFunctions.getReturnFlowFunction(c, methodThatNeedsSummary,n,retSiteC);
-						flowFunctionConstructionCount++;
-						Set<D> targets = retFunction.computeTargets(d2);
-						for(D d5: targets) {
-							EdgeFunction<V> f5 = edgeFunctions.getReturnEdgeFunction(c, icfg().getMethodOf(n), n, d2, retSiteC, d5);
-							if (operationMode == OperationMode.Update)
-								clearAndPropagate(d2, retSiteC, d5, f.composeWith(f5));
-							else
-								propagate(d2, retSiteC, d5, f.composeWith(f5));
-						}
-						if (operationMode == OperationMode.Update && targets.isEmpty())
-							clearAndPropagate(d2, retSiteC);
-					}
-				}
-				if(callers.isEmpty()) {
-					FlowFunction<D> normalFlowFunction = flowFunctions.getNormalFlowFunction(n,n);
-					flowFunctionConstructionCount++;
-					normalFlowFunction.computeTargets(d2);
-				}
+			if(callers.isEmpty()) {
+				FlowFunction<D> normalFlowFunction = flowFunctions.getNormalFlowFunction(n,n);
+				flowFunctionConstructionCount++;
+				normalFlowFunction.computeTargets(d2);
 			}
 		}
 	}
@@ -969,45 +1004,47 @@ public class IDESolver<N,D,M,V,I extends InterproceduralCFG<N, M>> {
 	
 	private void clearAndPropagate(D sourceVal, N target, D targetVal, EdgeFunction<V> f) {
 		assert operationMode == OperationMode.Update;
+		assert sourceVal != null;
+		assert target != null;
+		assert targetVal != null;
+		assert f != null;
 		
-		synchronized (jumpSave) {
+		synchronized (jumpFn) {
 			Set<D> savedFacts = this.jumpSave.get(target);
 			if (savedFacts == null || !savedFacts.contains(sourceVal)) {
 				// We have not processed this edge yet
-				Utils.addElementToMapSet(this.jumpSave, target, sourceVal);
-	
-				// Delete the original facts
-				synchronized (jumpFn) {
+				if (Utils.addElementToMapSet(this.jumpSave, target, sourceVal, jumpSaveSize)) {
+					// Delete the original facts
 					for (D d : new HashSet<D>(this.jumpFn.forwardLookup(sourceVal, target).keySet()))
 						this.jumpFn.removeFunction(sourceVal, target, d);
-				}
-				synchronized (changedNodes) {
-					this.changedNodes.add(target);
+					Utils.addElementToMapSet(this.changedNodes, target, sourceVal,
+							jumpSaveSize);
 				}
 			}
+			assert jumpSave.get(target).contains(sourceVal);
+			propagate(sourceVal, target, targetVal, f);
 		}
-		propagate(sourceVal, target, targetVal, f);
 	}
 
 	private void clearAndPropagate(D sourceVal, N target) {
 		assert operationMode == OperationMode.Update;
-		
-		synchronized (jumpSave) {
+		assert sourceVal != null;
+		assert target != null;
+	
+		synchronized (jumpFn) {
 			Set<D> savedFacts = this.jumpSave.get(target);
 			if (savedFacts == null || !savedFacts.contains(sourceVal)) {
 				// We have not processed this edge yet
-				Utils.addElementToMapSet(this.jumpSave, target, sourceVal);
-	
-				// Delete the original facts
-				synchronized (jumpFn) {
+				if (Utils.addElementToMapSet(this.jumpSave, target, sourceVal, jumpSaveSize)) {	
+					// Delete the original facts
 					for (D d : new HashSet<D>(this.jumpFn.forwardLookup(sourceVal, target).keySet()))
 						this.jumpFn.removeFunction(sourceVal, target, d);
-				}
-				synchronized (changedNodes) {
-					this.changedNodes.add(target);
+					Utils.addElementToMapSet(this.changedNodes, target, sourceVal,
+							jumpSaveSize);
 					scheduleEdgeProcessing(new PathEdge<N, D, M>(sourceVal, target, null));
 				}
 			}
+			assert jumpSave.get(target).contains(sourceVal);
 		}
 	}
 
@@ -1104,13 +1141,18 @@ public class IDESolver<N,D,M,V,I extends InterproceduralCFG<N, M>> {
 	}
 
 	private V val(N nHashN, D nHashD){ 
-		V l = val.get(nHashN, nHashD);
+		V l;
+		synchronized (val) {
+			l = val.get(nHashN, nHashD);
+		}
 		if(l==null) return valueLattice.topElement(); //implicitly initialized to top; see line [1] of Fig. 7 in SRH96 paper
 		else return l;
 	}
 	
 	private void setVal(N nHashN, D nHashD,V l){ 
-		val.put(nHashN, nHashD,l);
+		synchronized (val) {
+			val.put(nHashN, nHashD,l);
+		}
 		if(DEBUG_VERBOSE)
 			System.err.println("VALUE: "+icfg().getMethodOf(nHashN)+" "+nHashN+" "+nHashD+ " " + l);
 	}
@@ -1124,9 +1166,11 @@ public class IDESolver<N,D,M,V,I extends InterproceduralCFG<N, M>> {
 	}
 
 	private Set<Cell<N, D, EdgeFunction<V>>> endSummary(N sP, D d3) {
-		Table<N, D, EdgeFunction<V>> map = endSummary.get(sP, d3);
-		if(map==null) return Collections.emptySet();
-		return map.cellSet();
+		synchronized (endSummary) {
+			Table<N, D, EdgeFunction<V>> map = endSummary.get(sP, d3);
+			if(map==null) return Collections.emptySet();
+			return map.cellSet();
+		}
 	}
 
 	private void addEndSummary(N sP, D d1, N eP, D d2, EdgeFunction<V> f) {
@@ -1165,6 +1209,7 @@ public class IDESolver<N,D,M,V,I extends InterproceduralCFG<N, M>> {
 	 * Returns the V-type result for the given value at the given statement. 
 	 */
 	public V resultAt(N stmt, D value) {
+		//no need to synchronize here as all threads are known to have terminated
 		return val.get(stmt, value);
 	}
 	
@@ -1174,6 +1219,7 @@ public class IDESolver<N,D,M,V,I extends InterproceduralCFG<N, M>> {
 	 */
 	public Map<D,V> resultsAt(N stmt) {
 		//filter out the artificial zero-value
+		//no need to synchronize here as all threads are known to have terminated
 		return Maps.filterKeys(val.row(stmt), new Predicate<D>() {
 
 			public boolean apply(D val) {
@@ -1232,11 +1278,6 @@ public class IDESolver<N,D,M,V,I extends InterproceduralCFG<N, M>> {
 
 		public void run() {
 			N n = nAndD.getO1();
-			
-			if (n.toString().equals("virtualinvoke this.<org.junit.runner.JUnitCore: void addListener(org.junit.runner.notification.RunListener)>(listener)")
-					&& nAndD.getO2().toString().contains("listener"))
-				System.out.println("x");
-			
 			if(icfg().isStartPoint(n) ||
 				initialSeeds.contains(n)) { 		//our initial seeds are not necessarily method-start points but here they should be treated as such
 				propagateValueAtStart(nAndD);

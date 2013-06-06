@@ -7,8 +7,8 @@ import java.io.FileWriter;
 import java.io.IOException;
 import java.nio.channels.FileChannel;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
-import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -31,20 +31,22 @@ public class Utils {
 	 * value has already been there before)
 	 */
 	public static <X, Y>  boolean addElementToMapList(Map<X, List<Y>> edgeList, X key, Y value) {
-		List<Y> list = edgeList.get(key);
-		if (list != null) {
-			if (list.contains(value))
-				return false;
+		synchronized (edgeList) {
+			List<Y> list = edgeList.get(key);
+			if (list != null) {
+				if (list.contains(value))
+					return false;
+				else {
+					list.add(value);
+					return true;
+				}
+			}
 			else {
+				list = new ArrayList<Y>();
 				list.add(value);
+				edgeList.put(key, list);
 				return true;
 			}
-		}
-		else {
-			list = new ArrayList<Y>();
-			list.add(value);
-			edgeList.put(key, list);
-			return true;
 		}
 	}
 	
@@ -59,20 +61,33 @@ public class Utils {
 	 * value has already been there before)
 	 */
 	public static <X, Y>  boolean addElementToMapSet(Map<X, Set<Y>> edgeList, X key, Y value) {
-		Set<Y> list = edgeList.get(key);
-		if (list != null) {
-			if (list.contains(value))
-				return false;
+		return addElementToMapSet(edgeList, key, value, 15);
+	}
+	
+	/**
+	 * Adds the given value to a map from keys to sets of values. If there is already
+	 * a set for the given key in the map, the value is added. Otherwise, a new set
+	 * containing the value is created.
+	 * @param edgeList The set map to which to add the new element
+	 * @param key The key identifying the set to which to add the element 
+	 * @param value The value to be added to the set
+	 * @param initialSize The initial size to use for creating new hash sets
+	 * @return True if the value was actually inserted, false if not (i.e. the
+	 * value has already been there before)
+	 */
+	public static <X, Y>  boolean addElementToMapSet(Map<X, Set<Y>> edgeList, X key, Y value,
+			int initialSize) {
+		synchronized (edgeList) {
+			Set<Y> list = edgeList.get(key);
+			if (list != null) {
+				return list.add(value);
+			}
 			else {
+				list = new HashSet<Y>(initialSize);
 				list.add(value);
+				edgeList.put(key, list);
 				return true;
 			}
-		}
-		else {
-			list = new HashSet<Y>(15);
-			list.add(value);
-			edgeList.put(key, list);
-			return true;
 		}
 	}
 
@@ -86,14 +101,16 @@ public class Utils {
 	 * value was not in the list)
 	 */
 	public static <X, Y>  boolean removeElementFromMapList(Map<X, List<Y>> edgeList, X key, Y value) {
-		List<Y> list = edgeList.get(key);
-		if (list == null)
-			return false;
-		if (!list.remove(value))
-			return false;
-		if (list.isEmpty())
-			edgeList.remove(key);
-		return true;
+		synchronized (edgeList) {
+			List<Y> list = edgeList.get(key);
+			if (list == null)
+				return false;
+			if (!list.remove(value))
+				return false;
+			if (list.isEmpty())
+				edgeList.remove(key);
+			return true;
+		}
 	}
 
 	/**
@@ -106,14 +123,16 @@ public class Utils {
 	 * value was not in the list)
 	 */
 	public static <X, Y>  boolean removeElementFromMapSet(Map<X, Set<Y>> edgeList, X key, Y value) {
-		Set<Y> list = edgeList.get(key);
-		if (list == null)
-			return false;
-		if (!list.remove(value))
-			return false;
-		if (list.isEmpty())
-			edgeList.remove(key);
-		return true;
+		synchronized (edgeList) {
+			Set<Y> list = edgeList.get(key);
+			if (list == null)
+				return false;
+			if (!list.remove(value))
+				return false;
+			if (list.isEmpty())
+				edgeList.remove(key);
+			return true;
+		}
 	}
 
 	/**
@@ -139,15 +158,10 @@ public class Utils {
 	 * @return True if at least one element was removed, otherwise false
 	 */
 	public static <X,Y,Z> boolean removeElementFromTable(Table<X, Y, Z> table, X element) {
-		boolean found = false;
-		Iterator<Y> it = table.row(element).keySet().iterator();
-		while (it.hasNext()) {
-			it.next();
-			it.remove();
-			found = true;
-		}
-		assert !table.containsRow(element);
-		return found;
+		Map<Y, Z> rmMap = new HashMap<Y, Z>(table.row(element));
+		for (Y y : rmMap.keySet())
+			table.remove(element, y);
+		return !rmMap.isEmpty();
 	}
 	
 	public static void copyFile(String sourceFile, String destFile) throws IOException {

@@ -51,7 +51,7 @@ public interface InterproceduralCFG<N,M>  {
 	 * Returns all start points of a given method. There may be
 	 * more than one start point in case of a backward analysis.
 	 */
-	public Set<N> getStartPointsOf(M m);
+	public List<N> getStartPointsOf(M m);
 
 	/**
 	 * Returns all statements to which a call could return.

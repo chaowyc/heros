@@ -227,7 +227,7 @@ public abstract class AbstractUpdatableInterproceduralCFG<N,M>
 	}
 
 	@Override
-	public Set<UpdatableWrapper<N>> getStartPointsOf(UpdatableWrapper<M> m) {
+	public List<UpdatableWrapper<N>> getStartPointsOf(UpdatableWrapper<M> m) {
 		return wrap(baseCFG.getStartPointsOf(m.getContents()));
 	}
 
