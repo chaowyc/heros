@@ -407,6 +407,13 @@ public class IDESolver<N,D,M,V,I extends InterproceduralCFG<N, M>> {
 				if (this.predecessorRepropagated(changeSet.get(m), preLoop))
 					continue;
 				
+				if (newcfg.getMethodOf((UpdatableWrapper<N>) preLoop).toString().contains("equals(")
+						|| newcfg.getMethodOf((UpdatableWrapper<N>) preLoop).toString().contains("hashCode(")
+						|| newcfg.getMethodOf((UpdatableWrapper<N>) preLoop).toString().contains("toString(")) {
+					System.out.println("Skipped.");
+					continue;
+				}
+				
 				boolean hasEdge = false;
 				for (Cell<D, D, EdgeFunction<V>> srcEntry : jumpFn.lookupByTarget(preLoop)) {
 					D srcD = srcEntry.getRowKey();
@@ -492,6 +499,7 @@ public class IDESolver<N,D,M,V,I extends InterproceduralCFG<N, M>> {
 				+ (System.nanoTime() - prePhase2) / 1E9 + " seconds");
 
 		// Prune the old values
+		/*
 		long beforePrune = System.nanoTime();
 		pruneExpiredValues(this.changedNodes.keySet(), newcfg);
 		System.out.println("Phase 3.1: Values pruned in " + (System.nanoTime() - beforePrune) / 1E9
@@ -537,8 +545,8 @@ public class IDESolver<N,D,M,V,I extends InterproceduralCFG<N, M>> {
 		}
 		System.out.println("Phase 3.3: Worklist processing done, " + propagationCount + " edges processed"
 				+ " in " + (System.nanoTime() - beforePhase2) / 1E9 + " seconds.");
+		*/
 
-		/*
 		System.out.println("Phase 3: Processing worklist for values...");
 		long beforeVals = System.nanoTime();
 		val.clear();
@@ -546,7 +554,6 @@ public class IDESolver<N,D,M,V,I extends InterproceduralCFG<N, M>> {
 		awaitCompletionComputeValuesAndShutdown(true);
 		System.out.println("Phase 3: Worklist processing done, " + propagationCount + " edges processed"
 				+ " in " + (System.nanoTime() - beforeVals) / 1E9 + " seconds.");
-		*/
 		
 		this.changeSet = null;
 		this.changedNodes = null;
