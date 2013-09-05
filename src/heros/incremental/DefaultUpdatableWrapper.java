@@ -9,7 +9,6 @@ package heros.incremental;
 public class DefaultUpdatableWrapper<N> implements UpdatableWrapper<N> {
 	
 	private N contents;
-	private N previousContents;
 	private int updateCount = 0;
 	
 	/**
@@ -18,7 +17,6 @@ public class DefaultUpdatableWrapper<N> implements UpdatableWrapper<N> {
 	 */
 	public DefaultUpdatableWrapper(N n) {
 		this.contents = n;
-		this.previousContents = null;
 	}
 	
 	@Override
@@ -26,11 +24,6 @@ public class DefaultUpdatableWrapper<N> implements UpdatableWrapper<N> {
 		return this.contents;
 	}
 	
-	@Override
-	public N getPreviousContents() {
-		return this.previousContents;
-	}
-
 	@SuppressWarnings("unchecked")
 	@Override
 	public void notifyReferenceChanged(Object oldObject, Object newObject) {
@@ -70,16 +63,6 @@ public class DefaultUpdatableWrapper<N> implements UpdatableWrapper<N> {
 	}
 	*/
 
-	@Override
-	public void setSafepoint() {
-		this.previousContents = this.contents;
-	}
-
-	@Override
-	public boolean hasPreviousContents() {
-		return this.previousContents != null;
-	}
-	
 	public int getUpdateCount() {
 		return updateCount;
 	}

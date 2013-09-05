@@ -16,12 +16,12 @@ import heros.SynchronizedBy;
 import heros.ThreadSafe;
 import heros.util.Utils;
 
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Map.Entry;
 import java.util.Set;
 
 import com.google.common.collect.HashBasedTable;
@@ -149,6 +149,18 @@ public class JumpFunctions<N,D,L> {
 	}
 	
 	/**
+	 * Gets all source facts defined at the given target node.
+	 * @param target The target node at which to get the source facts
+	 * @return The source facts at the given target node
+	 */
+	public Set<D> getSourceFactsAtTarget(N target) {
+		assert target!=null;
+		Table<D, D, EdgeFunction<L>> table = nonEmptyLookupByTargetNode.get(target);
+		if(table==null) return Collections.emptySet();
+		return table.rowKeySet();
+	}
+
+	/**
 	 * Removes all entries from this table
 	 */
 	public void clear() {
@@ -162,12 +174,12 @@ public class JumpFunctions<N,D,L> {
 	 * @see target The target for which to remove all jump functions
 	 */
 	public synchronized void removeByTarget(N target) {
-		Map<D,List<D>> rmList = new HashMap<D,List<D>>();
-		for (Cell<D, D, EdgeFunction<L>> cell : lookupByTarget(target))
-			Utils.addElementToMapList(rmList, cell.getRowKey(), cell.getColumnKey());
-		for (Entry<D,List<D>> entry : rmList.entrySet())
-			for (D d : entry.getValue())
-				removeFunction(entry.getKey(), target, d);
+		Utils.removeElementFromTable(nonEmptyReverseLookup, target);
+		nonEmptyLookupByTargetNode.remove(target);
+		
+		List<D> ds = new ArrayList<D>(nonEmptyForwardLookup.column(target).keySet());
+		for (D d : ds)
+			nonEmptyForwardLookup.remove(d, target);
 	}
 
 	/**

@@ -12,7 +12,6 @@ import java.lang.ref.WeakReference;
 public class WeakUpdatableWrapper<N> implements UpdatableWrapper<N> {
 	
 	private WeakReference<N> contents;
-	private WeakReference<N> previousContents;
 	private int updateCount = 0;
 	
 	/**
@@ -21,7 +20,6 @@ public class WeakUpdatableWrapper<N> implements UpdatableWrapper<N> {
 	 */
 	public WeakUpdatableWrapper(N n) {
 		this.contents = new WeakReference<N>(n);
-		this.previousContents = null;
 	}
 	
 	@Override
@@ -29,14 +27,6 @@ public class WeakUpdatableWrapper<N> implements UpdatableWrapper<N> {
 		return this.contents.get();
 	}
 	
-	@Override
-	public N getPreviousContents() {
-		if (this.previousContents == null)
-			throw new RuntimeException("No safepoint available on this wrapper. Call "
-					+ "setSafepoint() first.");
-		return this.previousContents.get();
-	}
-
 	@SuppressWarnings("unchecked")
 	@Override
 	public void notifyReferenceChanged(Object oldObject, Object newObject) {		
@@ -49,16 +39,6 @@ public class WeakUpdatableWrapper<N> implements UpdatableWrapper<N> {
 	@Override
 	public String toString() {
 		return contents.get() == null ? "<null>" : contents.get().toString();
-	}
-
-	@Override
-	public void setSafepoint() {
-		this.previousContents = this.contents;
-	}
-	
-	@Override
-	public boolean hasPreviousContents() {
-		return this.previousContents != null;
 	}
 
 }

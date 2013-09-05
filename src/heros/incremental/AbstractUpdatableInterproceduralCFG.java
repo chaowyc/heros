@@ -151,15 +151,6 @@ public abstract class AbstractUpdatableInterproceduralCFG<N,M>
 		}		
 	}
 	
-	/**
-	 * Sets a safe point, i.e. creates a backup of all current wrapped object
-	 * references so that they can still be accessed after an update.
-	 */
-	protected void setSafepoint() {
-		for (UpdatableWrapper<?> uw : this.wrappedObjects.asMap().values())
-			uw.setSafepoint();
-	}
-	
 	@SuppressWarnings("unchecked")
 	@Override
 	public <X> UpdatableWrapper<X> wrap(X obj) {
@@ -229,6 +220,12 @@ public abstract class AbstractUpdatableInterproceduralCFG<N,M>
 	@Override
 	public List<UpdatableWrapper<N>> getStartPointsOf(UpdatableWrapper<M> m) {
 		return wrap(baseCFG.getStartPointsOf(m.getContents()));
+	}
+
+
+	@Override
+	public List<UpdatableWrapper<N>> getEndPointsOf(UpdatableWrapper<M> m) {
+		return wrap(baseCFG.getEndPointsOf(m.getContents()));
 	}
 
 	@Override

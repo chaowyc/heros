@@ -13,6 +13,8 @@ package heros;
 import java.util.List;
 import java.util.Set;
 
+import sun.org.mozilla.javascript.internal.ast.Block;
+
 /**
  * An interprocedural control-flow graph.
  * 
@@ -52,6 +54,11 @@ public interface InterproceduralCFG<N,M>  {
 	 * more than one start point in case of a backward analysis.
 	 */
 	public List<N> getStartPointsOf(M m);
+
+	/**
+	 * Returns all exit points of a given method.
+	 */
+	public List<N> getEndPointsOf(M m);
 
 	/**
 	 * Returns all statements to which a call could return.

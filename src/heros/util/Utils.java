@@ -7,7 +7,6 @@ import java.io.FileWriter;
 import java.io.IOException;
 import java.nio.channels.FileChannel;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -31,22 +30,20 @@ public class Utils {
 	 * value has already been there before)
 	 */
 	public static <X, Y>  boolean addElementToMapList(Map<X, List<Y>> edgeList, X key, Y value) {
-		synchronized (edgeList) {
-			List<Y> list = edgeList.get(key);
-			if (list != null) {
-				if (list.contains(value))
-					return false;
-				else {
-					list.add(value);
-					return true;
-				}
-			}
+		List<Y> list = edgeList.get(key);
+		if (list != null) {
+			if (list.contains(value))
+				return false;
 			else {
-				list = new ArrayList<Y>();
 				list.add(value);
-				edgeList.put(key, list);
 				return true;
 			}
+		}
+		else {
+			list = new ArrayList<Y>();
+			list.add(value);
+			edgeList.put(key, list);
+			return true;
 		}
 	}
 	
@@ -77,17 +74,15 @@ public class Utils {
 	 */
 	public static <X, Y>  boolean addElementToMapSet(Map<X, Set<Y>> edgeList, X key, Y value,
 			int initialSize) {
-		synchronized (edgeList) {
-			Set<Y> list = edgeList.get(key);
-			if (list != null) {
-				return list.add(value);
-			}
-			else {
-				list = new HashSet<Y>(initialSize);
-				list.add(value);
-				edgeList.put(key, list);
-				return true;
-			}
+		Set<Y> list = edgeList.get(key);
+		if (list != null) {
+			return list.add(value);
+		}
+		else {
+			list = new HashSet<Y>(initialSize);
+			list.add(value);
+			edgeList.put(key, list);
+			return true;
 		}
 	}
 
@@ -101,16 +96,14 @@ public class Utils {
 	 * value was not in the list)
 	 */
 	public static <X, Y>  boolean removeElementFromMapList(Map<X, List<Y>> edgeList, X key, Y value) {
-		synchronized (edgeList) {
-			List<Y> list = edgeList.get(key);
-			if (list == null)
-				return false;
-			if (!list.remove(value))
-				return false;
-			if (list.isEmpty())
-				edgeList.remove(key);
-			return true;
-		}
+		List<Y> list = edgeList.get(key);
+		if (list == null)
+			return false;
+		if (!list.remove(value))
+			return false;
+		if (list.isEmpty())
+			edgeList.remove(key);
+		return true;
 	}
 
 	/**
@@ -123,16 +116,14 @@ public class Utils {
 	 * value was not in the list)
 	 */
 	public static <X, Y>  boolean removeElementFromMapSet(Map<X, Set<Y>> edgeList, X key, Y value) {
-		synchronized (edgeList) {
-			Set<Y> list = edgeList.get(key);
-			if (list == null)
-				return false;
-			if (!list.remove(value))
-				return false;
-			if (list.isEmpty())
-				edgeList.remove(key);
-			return true;
-		}
+		Set<Y> list = edgeList.get(key);
+		if (list == null)
+			return false;
+		if (!list.remove(value))
+			return false;
+		if (list.isEmpty())
+			edgeList.remove(key);
+		return true;
 	}
 
 	/**
@@ -158,10 +149,14 @@ public class Utils {
 	 * @return True if at least one element was removed, otherwise false
 	 */
 	public static <X,Y,Z> boolean removeElementFromTable(Table<X, Y, Z> table, X element) {
-		Map<Y, Z> rmMap = new HashMap<Y, Z>(table.row(element));
-		for (Y y : rmMap.keySet())
-			table.remove(element, y);
-		return !rmMap.isEmpty();
+		if (table == null)
+			return false;
+
+		Map<Y, Z> row = table.row(element);
+		if (row == null || row.isEmpty())
+			return false;
+		row.clear();
+		return true;
 	}
 	
 	public static void copyFile(String sourceFile, String destFile) throws IOException {
