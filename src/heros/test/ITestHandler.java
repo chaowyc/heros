@@ -1,15 +1,15 @@
 package heros.test;
 
+import heros.incremental.UpdatableInterproceduralCFG;
+import heros.incremental.UpdatableWrapper;
+import heros.solver.IFDSSolver;
 import soot.SootMethod;
 import soot.Unit;
-import heros.InterproceduralCFG;
-import heros.solver.IFDSSolver;
-import heros.incremental.UpdatableWrapper;
 
 /**
  * Interface for injecting new code into the generic test case
  */
-public interface ITestHandler<D extends UpdatableWrapper<?>> {
+public interface ITestHandler<D> {
 
     /**
      * Method that is called before Soot is run the first time.
@@ -27,9 +27,9 @@ public interface ITestHandler<D extends UpdatableWrapper<?>> {
      * @param solver The solver that has performed the generic analysis
      */
     public void extendBasicTest
-    (InterproceduralCFG<UpdatableWrapper<Unit>, UpdatableWrapper<SootMethod>> icfg,
+    (UpdatableInterproceduralCFG<Unit, SootMethod> icfg,
      IFDSSolver<UpdatableWrapper<Unit>,D,UpdatableWrapper<SootMethod>,
-             InterproceduralCFG<UpdatableWrapper<Unit>,UpdatableWrapper<SootMethod>>> solver);
+             UpdatableInterproceduralCFG<Unit,SootMethod>> solver);
 
     /**
      * Method that is called when the CFG shall be patched by the implementer
@@ -46,9 +46,9 @@ public interface ITestHandler<D extends UpdatableWrapper<?>> {
      * and is extended by one up to the number of phases minues one.
      */
     public void performExtendedTest
-    (InterproceduralCFG<UpdatableWrapper<Unit>, UpdatableWrapper<SootMethod>> icfg,
+    (UpdatableInterproceduralCFG<Unit, SootMethod> icfg,
      IFDSSolver<UpdatableWrapper<Unit>,D,UpdatableWrapper<SootMethod>,
-             InterproceduralCFG<UpdatableWrapper<Unit>,UpdatableWrapper<SootMethod>>> solver,
+             UpdatableInterproceduralCFG<Unit,SootMethod>> solver,
      int phase);
 
     /**
