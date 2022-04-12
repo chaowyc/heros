@@ -373,12 +373,9 @@ public class IFDSReachingDefinitionsJUnit {
 
         String udir = System.getProperty("user.dir");
         String sootcp = udir + File.separator + "test/junit-4.10.jar" + cpSep
-                + udir + File.separator + "test/hamcrest-core-1.3.jar" + cpSep
-                + udir + File.separator + "bin" + cpSep
-                + "/usr/lib/jvm/java-6-sun/jre/lib/rt.jar" + cpSep
-                + "/usr/lib/jvm/java-6-sun/jre/lib/jce.jar" + cpSep
-                + "C:\\Program Files\\Java\\jre7\\lib\\rt.jar" + cpSep
-                + "C:\\Program Files\\Java\\jre7\\lib\\jce.jar";
+                + "/usr/lib/jvm/java-8-openjdk-amd64/jre/lib/rt.jar" + cpSep
+                + "/usr/lib/jvm/java-8-openjdk-amd64/jre/lib/jce.jar";
+
         System.out.println("Soot classpath: " + sootcp);
         soot.Main.v().run(new String[] {
                 "-W",
@@ -479,12 +476,9 @@ public class IFDSReachingDefinitionsJUnit {
 
         String udir = System.getProperty("user.dir");
         String sootcp = udir + File.separator + "test/junit-4.10.jar" + cpSep
-                + udir + File.separator + "test/hamcrest-core-1.3.jar" + cpSep
-                + udir + File.separator + "bin" + cpSep
-                + "/usr/lib/jvm/java-6-sun/jre/lib/rt.jar" + cpSep
-                + "/usr/lib/jvm/java-6-sun/jre/lib/jce.jar" + cpSep
-                + "C:\\Program Files\\Java\\jre7\\lib\\rt.jar" + cpSep
-                + "C:\\Program Files\\Java\\jre7\\lib\\jce.jar";
+                + "/usr/lib/jvm/java-8-openjdk-amd64/jre/lib/rt.jar" + cpSep
+                + "/usr/lib/jvm/java-8-openjdk-amd64/jre/lib/jce.jar";
+
         System.out.println("Soot classpath: " + sootcp);
         soot.Main.v().run(new String[] {
                 "-W",
