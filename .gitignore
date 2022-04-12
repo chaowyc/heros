@@ -6,3 +6,11 @@
 *.ear
 /ant.settings
 bin
+
+.idea
+.gradle
+build
+gradle
+gradlew
+gradlew.bat
+heros.iml
