@@ -19,27 +19,30 @@ repositories {
 }
 
 dependencies {
-    testImplementation 'junit:junit:4.10'
-    implementation 'com.google.guava:guava:13.0.1'
-    implementation 'org.soot-oss:soot:4.1.0'
-    implementation 'junit:junit:4.10'
+    testImplementation 'junit:junit:4.13.1'
+    implementation 'com.google.guava:guava:23.0'
+    implementation 'org.soot-oss:soot:4.3.0'
+    implementation 'junit:junit:4.13.1'
 }
 
 sourceSets {
     main {
         java {
-//            srcDirs = ["src/soot/jimple/interproc"]
             srcDirs = ["src"]
         }
     }
 }
 
-jar {
+task fatJar(type: Jar) {
     manifest {
-        attributes("Main-Class": "soot.jimple.interproc.ifds.Main")
+        attributes("Main-Class": "heros.Main")
     }
 
-    configurations.runtimeClasspath.collect { it.isDirectory() ? it : zipTree(it) }
+//    configurations.runtimeClasspath.collect { it.isDirectory() ? it : zipTree(it) }
+//    configurations.compile.collect { it.isDirectory() ? it : zipTree(it) }
+    from {
+            configurations.compileClasspath.collect { it.isDirectory() ? it : zipTree(it) }
+    } with jar
 }
 
 distributions {
