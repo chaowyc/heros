@@ -52,6 +52,7 @@ import com.google.common.collect.HashBasedTable;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Table;
 import com.google.common.collect.Table.Cell;
+import soot.jbco.bafTransformations.UpdateConstantsToFields;
 
 /**
  * Solves the given {@link IDETabulationProblem} as described in the 1996 paper by Sagiv,
@@ -348,7 +349,7 @@ public class IDESolverInc<N,D,M,V,I extends InterproceduralCFG<N, M>> {
 
         // Clear the computed values
 //		val.clear();
-
+        List<PathEdge<N,D,M>> runList = new LinkedList<PathEdge<N,D,M>>();
         // Prune the old values
         long beforePrune = System.nanoTime();
 //        pruneExpiredValues(this.changedNodes.keySet(), newcfg);
@@ -360,17 +361,44 @@ public class IDESolverInc<N,D,M,V,I extends InterproceduralCFG<N, M>> {
         System.out.println("Removing " + expiredNodes.size() + " expired nodes...");
         for (UpdatableWrapper<N> n : expiredNodes) {
             N n0 = (N) n;
+            List<UpdatableWrapper<N>> succsOfN = oldcfg.getSuccsOf(n);
+            List<UpdatableWrapper<N>> predsOfN = oldcfg.getPredsOf(n);
+            for (UpdatableWrapper<N> pred : predsOfN) {
+                N pred0 = (N) pred;
+                Set<Cell<D, D, EdgeFunction<V>>> jFAtPred = jumpFn.lookupByTarget((N)pred);
+                for (Cell<D, D, EdgeFunction<V>> jfCell : jFAtPred) {
+                    final D d1 = jfCell.getRowKey();
+                    final N n1 = pred0;
+                    final D d2 = jfCell.getColumnKey();
 
-//            Set<Cell<D, D, EdgeFunction<V>>> srcDAndTgtDAtN = jumpFn.lookupByTarget(n0);
+                    for (UpdatableWrapper<N> succ : succsOfN) {
+                        N succ0 = (N) succ;
+                        FlowFunction<D> flowFunction = flowFunctions.getNormalFlowFunction(n1, succ0);
+                        Set<D> res = flowFunction.computeTargets(d2);
+                        EdgeFunction<V> f = jfCell.getValue();
+                        for (D d3 : res) {
+                            Map<D,EdgeFunction<V>> srcDAtSucc = jumpFn.reverseLookup(succ0, d3);
+                            if (srcDAtSucc.containsKey(d1)) {
+                                // rm current stmt causes no effect
+                                continue;
+                            } else {
+                                EdgeFunction<V> fprime = f.composeWith(edgeFunctions.getNormalEdgeFunction(n1, d2, succ0, d3));
+                                jumpFn.addFunction(jfCell.getRowKey(), succ0, d3, fprime);
+                                runList.add(new PathEdge<>(d1, succ0, d3));
+                            }
+                        }
+                    }
+                }
+            }
 
-            this.jumpFn.removeByTarget(n0);
-            Utils.removeElementFromTable(this.incoming, n0);
-            Utils.removeElementFromTable(this.endSummary, n0);
-            Utils.removeElementFromTable(this.val, n0);
-            for (Table.Cell<N, D, Map<N, Set<D>>> cell : incoming.cellSet())
-                cell.getValue().remove(n0);
-            for (Table.Cell<N, D, Table<N, D, EdgeFunction<V>>> cell : endSummary.cellSet())
-                Utils.removeElementFromTable(cell.getValue(), n0);
+//            this.jumpFn.removeByTarget(n0);
+//            Utils.removeElementFromTable(this.incoming, n0);
+//            Utils.removeElementFromTable(this.endSummary, n0);
+//            Utils.removeElementFromTable(this.val, n0);
+//            for (Table.Cell<N, D, Map<N, Set<D>>> cell : incoming.cellSet())
+//                cell.getValue().remove(n0);
+//            for (Table.Cell<N, D, Table<N, D, EdgeFunction<V>>> cell : endSummary.cellSet())
+//                Utils.removeElementFromTable(cell.getValue(), n0);
         }
         System.out.println("Expired nodes removed in "
                 + (System.nanoTime() - beforeRemove) / 1E9
@@ -402,7 +430,6 @@ public class IDESolverInc<N,D,M,V,I extends InterproceduralCFG<N, M>> {
         long beforeEdges = System.nanoTime();
         this.operationMode = OperationMode.Update;
 
-        List<PathEdge<N,D,M>> runList = new LinkedList<PathEdge<N,D,M>>();
         Set<N> actuallyProcessed = new HashSet<N>((int) propagationCount);
 
         {
@@ -1060,10 +1087,16 @@ public class IDESolverInc<N,D,M,V,I extends InterproceduralCFG<N, M>> {
             Set<D> res = flowFunction.computeTargets(d2);
             for (D d3 : res) {
                 EdgeFunction<V> fprime = f.composeWith(edgeFunctions.getNormalEdgeFunction(n, d2, m, d3));
-                if (operationMode == OperationMode.Update)
-                    clearAndPropagate(d1, m, d3, fprime);
-                else
+                if (operationMode == OperationMode.Update) {
+                    Map<D,EdgeFunction<V>> srcD = jumpFn.reverseLookup(m, d3);
+                    if (srcD.containsKey(d1)) {
+                        continue;
+                    } else {
+                        propagate(d1, m, d3, fprime);
+                    }
+                } else {
                     propagate(d1, m, d3, fprime);
+                }
             }
             if (operationMode == OperationMode.Update && res.isEmpty())
                 clearAndPropagate(d1, m);

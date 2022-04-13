@@ -3,6 +3,7 @@ package heros.test;
 import heros.incremental.UpdatableInterproceduralCFG;
 import heros.incremental.UpdatableWrapper;
 import heros.solver.IFDSSolver;
+import heros.solver.IFDSSolverInc;
 import soot.SootMethod;
 import soot.Unit;
 
