@@ -32,6 +32,10 @@ public class CountLatch {
 			return getState();
 		}
 
+		void reset() {
+			setState(0);
+		}
+
 		protected int tryAcquireShared(int acquires) {
 			return (getState() == 0) ? 1 : -1;
 		}
@@ -85,4 +89,24 @@ public class CountLatch {
 		return super.toString() + "[Count = " + sync.getCount() + "]";
 	}
 
+	/**
+	 * Resets the counter to zero. But waiting threads won't be released somehow.
+	 * So this interrupts the threads so that they escape from their waiting state.
+	 */
+	public void resetAndInterrupt(){
+		sync.reset();
+		for (int i = 0; i < 3; i++) //Because it is a best effort thing, do it three times and hope for the best.
+			for (Thread t : sync.getQueuedThreads())
+				t.interrupt();
+		sync.reset(); //Just in case a thread would've incremented the counter again.
+	}
+
+	/**
+	 * Gets whether this counting latch has arrived at zero
+	 * @return True if this counting latch has arrived at zero, otherwise
+	 * false
+	 */
+	public boolean isAtZero() {
+		return sync.getCount() == 0;
+	}
 }

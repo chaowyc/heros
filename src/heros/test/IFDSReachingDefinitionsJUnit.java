@@ -1601,8 +1601,8 @@ public class IFDSReachingDefinitionsJUnit {
     public void newVersionJU_Propagate() {
 //        for (int i = 0; i < TEST_COUNT; i++) {
             System.out.println("Starting newVersionJU_Propagate...");
-            performTestDirect(ITestHandlerNewVersion(), "org.junit.runner.JUnitCore");
-            performTestDirectInc(ITestHandlerNewVersion(), "org.junit.runner.JUnitCore");
+        performTestDirectInc(ITestHandlerNewVersion(), "org.junit.runner.JUnitCore");
+        performTestDirect(ITestHandlerNewVersion(), "org.junit.runner.JUnitCore");
             System.out.println("newVersionJU_Propagate finished.");
 //        }
     }

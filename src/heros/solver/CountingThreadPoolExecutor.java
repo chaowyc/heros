@@ -10,9 +10,9 @@
  ******************************************************************************/
 package heros.solver;
 
-import java.util.concurrent.BlockingQueue;
-import java.util.concurrent.ThreadPoolExecutor;
-import java.util.concurrent.TimeUnit;
+import heros.util.SootThreadGroup;
+
+import java.util.concurrent.*;
 
 /**
  * A {@link ThreadPoolExecutor} which keeps track of the number of spawned
@@ -22,20 +22,41 @@ public class CountingThreadPoolExecutor extends ThreadPoolExecutor {
 	
 	protected final CountLatch numRunningTasks = new CountLatch(0);
 
+	protected volatile Throwable exception = null;
+
 	public CountingThreadPoolExecutor(int corePoolSize, int maximumPoolSize, long keepAliveTime, TimeUnit unit,
 			BlockingQueue<Runnable> workQueue) {
-		super(corePoolSize, maximumPoolSize, keepAliveTime, unit, workQueue);
+		super(corePoolSize, maximumPoolSize, keepAliveTime, unit, workQueue, new ThreadFactory() {
+
+			@Override
+			public Thread newThread(Runnable r) {
+				return new Thread(new SootThreadGroup(), r);
+			}
+		});
 	}
 
 	@Override
 	public void execute(Runnable command) {
-		numRunningTasks.increment();
-		super.execute(command);
+		try {
+			numRunningTasks.increment();
+			super.execute(command);
+		}
+		catch (RejectedExecutionException ex) {
+			// If we were unable to submit the task, we may not count it!
+			numRunningTasks.decrement();
+			throw ex;
+		}
 	}
 	
 	@Override
 	protected void afterExecute(Runnable r, Throwable t) {
-		numRunningTasks.decrement();
+		if (t != null) {
+			exception = t;
+			shutdownNow();
+			numRunningTasks.resetAndInterrupt();
+		} else {
+			numRunningTasks.decrement();
+		}
 		super.afterExecute(r, t);
 	}
 
@@ -53,4 +74,10 @@ public class CountingThreadPoolExecutor extends ThreadPoolExecutor {
 		numRunningTasks.awaitZero(timeout, unit);
 	}
 
+	/**
+	 * Returns the exception thrown during task execution (if any).
+	 */
+	public Throwable getException() {
+		return exception;
+	}
 }

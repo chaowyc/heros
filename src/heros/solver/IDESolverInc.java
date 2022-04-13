@@ -384,21 +384,21 @@ public class IDESolverInc<N,D,M,V,I extends InterproceduralCFG<N, M>> {
                             } else {
                                 EdgeFunction<V> fprime = f.composeWith(edgeFunctions.getNormalEdgeFunction(n1, d2, succ0, d3));
                                 jumpFn.addFunction(jfCell.getRowKey(), succ0, d3, fprime);
-                                runList.add(new PathEdge<>(d1, succ0, d3));
+//                                runList.add(new PathEdge<>(d1, succ0, d3));
                             }
                         }
                     }
                 }
             }
 
-//            this.jumpFn.removeByTarget(n0);
-//            Utils.removeElementFromTable(this.incoming, n0);
-//            Utils.removeElementFromTable(this.endSummary, n0);
-//            Utils.removeElementFromTable(this.val, n0);
-//            for (Table.Cell<N, D, Map<N, Set<D>>> cell : incoming.cellSet())
-//                cell.getValue().remove(n0);
-//            for (Table.Cell<N, D, Table<N, D, EdgeFunction<V>>> cell : endSummary.cellSet())
-//                Utils.removeElementFromTable(cell.getValue(), n0);
+            this.jumpFn.removeByTarget(n0);
+            Utils.removeElementFromTable(this.incoming, n0);
+            Utils.removeElementFromTable(this.endSummary, n0);
+            Utils.removeElementFromTable(this.val, n0);
+            for (Table.Cell<N, D, Map<N, Set<D>>> cell : incoming.cellSet())
+                cell.getValue().remove(n0);
+            for (Table.Cell<N, D, Table<N, D, EdgeFunction<V>>> cell : endSummary.cellSet())
+                Utils.removeElementFromTable(cell.getValue(), n0);
         }
         System.out.println("Expired nodes removed in "
                 + (System.nanoTime() - beforeRemove) / 1E9
